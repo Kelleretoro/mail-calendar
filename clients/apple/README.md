@@ -224,14 +224,16 @@ make one; `MACOS_DEV_PROVISIONING_PROFILE` in `signing.local.sh` points at one k
 result is `build/release-<VERSION>/AllodiaMail-<VERSION>-Sandboxed.zip`, which runs only on the
 Macs the profile lists and keeps its data in the sandbox's container.
 
-⚠️ **The Share Extension keeps the profile the archive embedded**, Xcode's wildcard *Mac Team
-Provisioning Profile*, which grants no group, while it is signed claiming
-`group.eu.allodia.mailcal`. This flow's pass leaves it there, and here Flow E and the Store build
-differ: Flow B embeds the extension's own Mac App Store profile. Whether a share still reaches the
-app under Flow E's has not been measured.
+**The Share Extension needs a development profile of its own**, for its own App ID
+(`<app id>.share`), granting the same App Group and listing the same Mac, made the same way. Flow B
+embeds the extension's Mac App Store profile; this flow embeds that one. Xcode's wildcard *Mac Team
+Provisioning Profile*, which the archive carries, grants no group, and under it every share is
+refused on its way into the drop box, so the app comes forward with nothing to open.
+`MACOS_DEV_SHARE_PROVISIONING_PROFILE` in `signing.local.sh` points at one kept elsewhere.
 
-For the dev loop, `Scripts/build-and-run.sh --macos --sandboxed` gives the app the same
-entitlements in seconds rather than an archive's minutes, with a debug core.
+For the dev loop, `Scripts/build-and-run.sh --macos --sandboxed` gives the app and the Share
+Extension the same entitlements, under the same two development profiles, in seconds rather than an
+archive's minutes, with a debug core.
 
 The archive's app (`build/package/AllodiaMail.xcarchive/Products/Applications/AllodiaMail.app`) is
 sandboxed too, because `--app-store` archives with
@@ -247,8 +249,9 @@ copy as the profile rather than as the code, and reach for Flow E instead of han
 Steering the archive itself onto an App-Groups profile is not a flag we have, deliberately. An
 `xcodebuild` setting override is global, and `PROVISIONING_PROFILE_SPECIFIER` is one no override can
 scope: it reaches the MailcalKit package targets ("does not support provisioning profiles") and the
-Share Extension, whose bundle id is a different App ID. `--sandboxed` gets the app target alone
-through `MACOS_PROVISIONING_PROFILE` in `project.yml`, which is the same indirection
+Share Extension, whose bundle id is a different App ID. `--sandboxed` reaches each target alone,
+the app through `MACOS_PROVISIONING_PROFILE` and the extension through
+`MACOS_SHARE_PROVISIONING_PROFILE` in `project.yml`, which is the same indirection
 `MACOS_ENTITLEMENTS` uses and for the same reason.
 
 For a build that is Distribution-signed as well, install it through **TestFlight for macOS** after

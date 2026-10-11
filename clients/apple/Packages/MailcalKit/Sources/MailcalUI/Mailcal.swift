@@ -341,8 +341,11 @@ public struct ContentView: View {
         // state, and a link has nowhere to go without it. See Mailcal.ComposeDraft.swift.
         .modifier(MailLinkRouting(model: model, open: openMailLink))
         // Another app sharing files into a new message. The Share Extension has already staged
-        // them; this looks in the box whenever the app is activated. See Mailcal.Share.swift.
-        .modifier(ShareRouting(model: model, open: openShare))
+        // them; this looks in the box when the doorbell rings, when the app is activated and when the
+        // last composer closes. See Mailcal.Share.swift.
+        .modifier(
+            ShareRouting(model: model, composer: ShareGate.Composer(compose), open: openShare)
+        )
         // A clicked new-mail notification, which names a message the process-wide delegate cannot
         // open itself. See Mailcal.NotificationOpen.swift.
         .modifier(NotificationOpenRouting(model: model, open: openNotificationOpen))
