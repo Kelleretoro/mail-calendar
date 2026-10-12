@@ -52,6 +52,86 @@ impl MailcalApp {
     ) -> DetectedSetup {
         detected_setup(self.detect_route(&email, mx_resolver))
     }
+
+    /// What setup offers an account just signed in to choose, when only its server could say:
+    /// each use a JMAP session offers, on while the account is used for it. Empty when there is
+    /// nothing to choose (the session offers one use), for every other kind, whose uses were
+    /// chosen before the sign-in, and for an account that is not registered.
+    pub fn signed_in_setup_choices(&self, account_id: String) -> Vec<SetupChoice> {
+        let Some(account) = self
+            .registry
+            .facts()
+            .into_iter()
+            .find(|account| account.id == account_id && account.kind == AccountKind::Jmap)
+        else {
+            return Vec::new();
+        };
+        signed_in_choices(&account.chosen, &account.lacks)
+    }
+
+    /// The calendar-and-contacts setup for the servers detection found beside the JMAP server of
+    /// `account_id`, offering only what its session lacks: the same answer a domain with those
+    /// servers and no mail server gets, the typed address as its login. Contacts are looked for at
+    /// the calendar's server when no address-book server was found. `None` when the session
+    /// lacks neither, or no server was found for what it lacks.
+    #[must_use]
+    pub fn dav_setup_beside(
+        &self,
+        account_id: String,
+        email: String,
+        caldav_url: Option<String>,
+        carddav_url: Option<String>,
+    ) -> Option<DetectedSetup> {
+        use mailcal_account::Capability;
+        let lacks = self
+            .registry
+            .facts()
+            .into_iter()
+            .find(|account| account.id == account_id && account.kind == AccountKind::Jmap)?
+            .lacks;
+        let calendar = lacks.contains(Capability::Calendar);
+        let contacts = lacks.contains(Capability::Contacts);
+        let carddav_url = carddav_url.filter(|_| contacts);
+        let caldav_url = caldav_url.filter(|_| calendar || (contacts && carddav_url.is_none()));
+        let mut setup = detected_setup(mailcal_account::SetupRecommendation::Dav {
+            email,
+            caldav_url,
+            carddav_url,
+        });
+        setup.choices.retain(|choice| match choice.capability {
+            AccountCapability::Calendar => calendar,
+            AccountCapability::Contacts => contacts,
+            _ => false,
+        });
+        setup
+            .choices
+            .iter()
+            .any(|choice| choice.on)
+            .then_some(setup)
+    }
+}
+
+/// The uses of mail, calendar and contacts a server offers, on while `chosen`; none when it
+/// offers fewer than two, since one use is not a choice.
+fn signed_in_choices(
+    chosen: &mailcal_account::Capabilities,
+    lacks: &mailcal_account::Capabilities,
+) -> Vec<SetupChoice> {
+    use mailcal_account::Capability;
+    let choices: Vec<SetupChoice> = [Capability::Mail, Capability::Calendar, Capability::Contacts]
+        .into_iter()
+        .filter(|&capability| !lacks.contains(capability))
+        .map(|capability| SetupChoice {
+            capability: capability.into(),
+            on: chosen.contains(capability),
+            server_found: true,
+        })
+        .collect();
+    if choices.len() < 2 {
+        Vec::new()
+    } else {
+        choices
+    }
 }
 
 /// [`setup_from_offer`](crate::setup_from_offer), as the found card takes it: the route an
@@ -75,13 +155,18 @@ pub fn provider_setup_choices(kind: AccountKind, email: String) -> Vec<SetupChoi
     })
 }
 
-/// Whether setup ends by offering to link an account of `kind` to another. Only a standards
-/// account is offered it: Microsoft, Google and JMAP hold mail, calendar and contacts themselves,
-/// so linking one is left to Settings, where it can be done at any time.
+/// Whether setup ends by offering to link an account of `kind` to another, for what it is not
+/// used for (the entry's `link_candidates`). A standards account is offered it, and so is a JMAP
+/// account, whose session often has no calendar: few JMAP servers offer one while JMAP Calendars
+/// is still a draft. Microsoft and Google hold mail, calendar and contacts themselves, so linking
+/// one is left to Settings, where it can be done at any time.
 #[uniffi::export]
 #[must_use]
 pub fn offers_setup_links(kind: AccountKind) -> bool {
-    matches!(kind, AccountKind::Imap | AccountKind::Dav)
+    matches!(
+        kind,
+        AccountKind::Imap | AccountKind::Dav | AccountKind::Jmap
+    )
 }
 
 fn ffi_choices(choices: Vec<mailcal_account::SetupChoice>) -> Vec<SetupChoice> {

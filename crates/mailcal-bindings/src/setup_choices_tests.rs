@@ -111,15 +111,12 @@ fn a_manual_provider_sign_in_offers_what_a_detected_one_does() {
 /// Linking at setup is offered for a standards account only: a provider that holds mail,
 /// calendar and contacts itself is linked from Settings, when the person wants to.
 #[test]
-fn setup_offers_links_for_a_standards_account_only() {
+fn setup_offers_links_for_a_standards_or_jmap_account_only() {
     use crate::AccountKind;
-    assert!(super::offers_setup_links(AccountKind::Imap));
-    assert!(super::offers_setup_links(AccountKind::Dav));
-    for kind in [
-        AccountKind::Microsoft,
-        AccountKind::Google,
-        AccountKind::Jmap,
-    ] {
+    for kind in [AccountKind::Imap, AccountKind::Dav, AccountKind::Jmap] {
+        assert!(super::offers_setup_links(kind), "{kind:?}");
+    }
+    for kind in [AccountKind::Microsoft, AccountKind::Google] {
         assert!(!super::offers_setup_links(kind), "{kind:?}");
     }
 }

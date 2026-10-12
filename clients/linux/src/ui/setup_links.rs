@@ -4,7 +4,7 @@
 //! the step offers exactly what the account's page would.
 
 use adw::prelude::*;
-use mailcal_bindings::{AccountsSnapshot, LinkSlot};
+use mailcal_bindings::{AccountCapability, AccountsSnapshot, CapabilityState, LinkSlot};
 
 use super::{
     AppInput,
@@ -13,11 +13,106 @@ use super::{
 };
 use crate::l10n;
 
+/// The calendar and address-book servers detection found beside a JMAP server, for the account
+/// set up from it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Beside {
+    pub(super) account: String,
+    pub(super) email: String,
+    pub(super) caldav_url: Option<String>,
+    pub(super) carddav_url: Option<String>,
+}
+
+/// The servers detection found beside a JMAP server, for the address it was found for.
+#[derive(Clone, Debug)]
+pub(crate) struct Found {
+    pub(super) email: String,
+    caldav_url: Option<String>,
+    carddav_url: Option<String>,
+}
+
+impl Found {
+    /// What a detected card found beside its JMAP server, if anything.
+    pub(super) fn of(detected: &super::setup_model::DetectedForm) -> Option<Self> {
+        let super::setup_model::DetectedForm::Jmap(form) = detected else {
+            return None;
+        };
+        (form.caldav_url.is_some() || form.carddav_url.is_some()).then(|| Self {
+            email: form.email.clone(),
+            caldav_url: form.caldav_url.clone(),
+            carddav_url: form.carddav_url.clone(),
+        })
+    }
+
+    /// The offer for `account`, set up from the JMAP server these were found beside.
+    pub(super) fn offer_for(&self, account: &str) -> Beside {
+        Beside {
+            account: account.to_owned(),
+            email: self.email.clone(),
+            caldav_url: self.caldav_url.clone(),
+            carddav_url: self.carddav_url.clone(),
+        }
+    }
+}
+
+/// What the servers found beside a JMAP server would fill: only what its session lacks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fills {
+    Calendar,
+    Contacts,
+    Both,
+}
+
+impl Fills {
+    /// What `beside` can fill of what the account lacks; contacts are looked for at the
+    /// calendar's server when no address book was found (`MailcalApp::dav_setup_beside`).
+    fn of(beside: &Beside, calendar: bool, contacts: bool) -> Option<Self> {
+        let calendar = calendar && beside.caldav_url.is_some();
+        let contacts = contacts && (beside.carddav_url.is_some() || beside.caldav_url.is_some());
+        match (calendar, contacts) {
+            (true, true) => Some(Self::Both),
+            (true, false) => Some(Self::Calendar),
+            (false, true) => Some(Self::Contacts),
+            (false, false) => None,
+        }
+    }
+
+    fn note(self, host: &str) -> String {
+        match self {
+            Self::Calendar => l10n::setup_links_beside_calendar_note(host),
+            Self::Contacts => l10n::setup_links_beside_contacts_note(host),
+            Self::Both => l10n::setup_links_beside_note(host),
+        }
+    }
+
+    fn action(self, host: &str) -> String {
+        match self {
+            Self::Calendar => l10n::setup_links_beside_calendar(host),
+            Self::Contacts => l10n::setup_links_beside_contacts(host),
+            Self::Both => l10n::setup_links_beside(host),
+        }
+    }
+}
+
+impl Beside {
+    /// The host a person recognises the servers by.
+    fn host(&self) -> String {
+        self.caldav_url
+            .as_deref()
+            .or(self.carddav_url.as_deref())
+            .map(super::setup_uses::url_host)
+            .unwrap_or_default()
+    }
+}
+
 /// The step for one account: its pickers, and what the person picked in each.
 #[derive(Debug)]
 pub(crate) struct LinkStep {
     pub(super) account: String,
     pub(super) pickers: Vec<LinkPicker>,
+    /// The servers found beside the account's own, offered as an account of their own while its
+    /// server offers no calendar or contacts.
+    pub(super) beside: Option<(Beside, Fills)>,
     /// Per picker, the index into its options that is picked; a suggestion starts picked, and
     /// the person confirms it by continuing.
     pub(super) picked: Vec<Option<usize>>,
@@ -26,9 +121,15 @@ pub(crate) struct LinkStep {
 }
 
 impl LinkStep {
-    /// The step for `account`, or `None` when no other account can fill anything it lacks, or
-    /// its kind is not offered linking at setup (`offers_setup_links`).
-    pub(super) fn for_account(snapshot: &AccountsSnapshot, account: &str) -> Option<Self> {
+    /// The step for `account`, or `None` when no other account can fill anything it lacks and its
+    /// server offers its calendar and contacts, or its kind is not offered linking at setup
+    /// (`offers_setup_links`). A server without one gets the step anyway, for "Add another
+    /// account" and for `beside`, which is offered only then.
+    pub(super) fn for_account(
+        snapshot: &AccountsSnapshot,
+        account: &str,
+        beside: Option<&Beside>,
+    ) -> Option<Self> {
         let entry = snapshot
             .accounts
             .iter()
@@ -38,12 +139,39 @@ impl LinkStep {
             .into_iter()
             .filter(|picker| picker.selected.is_none())
             .collect();
-        (!pickers.is_empty()).then(|| Self {
+        let lacks = |capability| {
+            entry.uses.iter().any(|use_| {
+                use_.capability == capability && use_.state == CapabilityState::NotOffered
+            })
+        };
+        let (calendar, contacts) = (
+            lacks(AccountCapability::Calendar),
+            lacks(AccountCapability::Contacts),
+        );
+        let lacks = calendar || contacts;
+        let beside = beside.and_then(|found| {
+            Fills::of(found, calendar, contacts).map(|fills| (found.clone(), fills))
+        });
+        (!pickers.is_empty() || lacks).then(|| Self {
             account: account.to_owned(),
             picked: pickers.iter().map(|picker| picker.suggested).collect(),
             pickers,
+            beside,
             touched: false,
         })
+    }
+
+    /// Picks `added`, an account just added from this step, in each slot it can fill and nothing
+    /// is picked in: it was added to be linked.
+    pub(super) fn adopt(&mut self, added: &str) {
+        for (picker, picked) in self.pickers.iter().zip(self.picked.iter_mut()) {
+            if picked.is_none()
+                && let Some(index) = picker.options.iter().position(|option| option.id == added)
+            {
+                *picked = Some(index);
+                self.touched = true;
+            }
+        }
     }
 
     /// The same step read again, for a suggestion that arrived after it was drawn. A step the
@@ -131,6 +259,15 @@ pub(super) fn step(
             input.emit(AppInput::SetupLinkPicked(index, option));
         });
     }
+    if let Some((beside, fills)) = &step.beside {
+        let host = beside.host();
+        content.append(&body(&fills.note(&host)));
+        let set_up = gtk::Button::with_label(&fills.action(&host));
+        set_up.set_halign(gtk::Align::Start);
+        let input = sender.clone();
+        set_up.connect_clicked(move |_| input.emit(AppInput::SetupBesideAccount));
+        content.append(&set_up);
+    }
     content.append(&caption(l10n::setup_links_note()));
     let add = gtk::Button::with_label(l10n::setup_links_add());
     add.set_halign(gtk::Align::Start);
@@ -155,3 +292,7 @@ pub(super) fn step(
 #[cfg(test)]
 #[path = "setup_links_tests.rs"]
 pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "setup_links_beside_tests.rs"]
+pub(super) mod beside_tests;

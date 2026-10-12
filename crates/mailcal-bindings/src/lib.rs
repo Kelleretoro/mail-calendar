@@ -84,6 +84,7 @@ mod error;
 mod google;
 mod imap_oauth;
 mod jmap_oauth;
+mod jmap_session;
 mod launch;
 mod logging;
 mod mailto;
