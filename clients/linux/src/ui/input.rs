@@ -238,6 +238,8 @@ pub(crate) enum AppInput {
     ReadingBodyPainted,
     OpenSettings,
     OpenAccountSetup,
+    /// Opens setup as the required first-account screen, card and all; only the showcase asks.
+    #[cfg(any(debug_assertions, feature = "dev-harness"))]
     RestartAccountSetup,
     /// Back from the second step to the address, which stays as typed.
     AccountSetupBack,

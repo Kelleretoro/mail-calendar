@@ -326,6 +326,7 @@ impl AppModel {
                     self.setup.open(false);
                 }
             }
+            #[cfg(any(debug_assertions, feature = "dev-harness"))]
             AppInput::RestartAccountSetup => {
                 self.setup.open(self.has_no_accounts());
                 // Removing the last account reopens the first-account screen, and a sign-in may

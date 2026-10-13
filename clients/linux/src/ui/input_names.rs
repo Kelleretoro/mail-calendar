@@ -106,6 +106,7 @@ impl fmt::Debug for AppInput {
             Self::ReadingBodyPainted => "ReadingBodyPainted",
             Self::OpenSettings => "OpenSettings",
             Self::OpenAccountSetup => "OpenAccountSetup",
+            #[cfg(any(debug_assertions, feature = "dev-harness"))]
             Self::RestartAccountSetup => "RestartAccountSetup",
             Self::AccountSetupBack => "AccountSetupBack",
             Self::SetupLinkPicked(..) => "SetupLinkPicked",
