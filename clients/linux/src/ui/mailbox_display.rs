@@ -55,6 +55,10 @@ pub(super) struct DisplayRow {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact the row draws; `outgoing` and `draft` never both hold"
+)]
 pub(super) struct DisplayMessage {
     pub(super) key: String,
     pub(super) avatar: AvatarData,
@@ -63,6 +67,7 @@ pub(super) struct DisplayMessage {
     pub(super) date: String,
     pub(super) unread: bool,
     pub(super) outgoing: bool,
+    pub(super) draft: bool,
     pub(super) has_attachment: bool,
 }
 
@@ -120,6 +125,7 @@ pub(super) fn message_display(message: &ThreadMessage) -> DisplayMessage {
         date: message.date.clone(),
         unread: message.unread,
         outgoing: message.outgoing,
+        draft: message.draft,
         has_attachment: message.has_attachment,
     }
 }
