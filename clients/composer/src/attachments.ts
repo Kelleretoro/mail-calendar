@@ -59,6 +59,12 @@ export class Attachments {
     );
   }
 
+  /// The bytes of a picture that travels in the document, as the `data:` URI its `<img>` shows, or
+  /// an empty string for an id that is not one.
+  dataUrlOf(id: string): string {
+    return this.items.find((item) => item.id === id)?.data_url ?? "";
+  }
+
   add(meta: AttachmentMeta): void {
     this.remember({
       id: String(meta.id),
@@ -98,10 +104,11 @@ export class Attachments {
     const seq = this.captured;
     this.captured += 1;
     const id = `captured-${seq}`;
+    const mediaType = meta.media_type || mediaTypeOf(meta.data_url) || "image/png";
     this.remember({
       id,
-      file_name: meta.file_name || `image-${seq}${extensionFor(meta.media_type)}`,
-      media_type: meta.media_type || mediaTypeOf(meta.data_url) || "image/png",
+      file_name: meta.file_name || `image-${seq}${extensionFor(mediaType)}`,
+      media_type: mediaType,
       size: null,
       disposition: { Inline: { cid: mintContentId(seq) } },
       data_url: meta.data_url,
