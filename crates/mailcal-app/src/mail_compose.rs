@@ -1,8 +1,8 @@
-//! Rich-compose mail operations: new-message / reply / reply-all / forward sends, plus the
-//! reply-recipient suggestion that pre-fills a reply's editable To/Cc. A second `impl App`
-//! block (like `reading`/`calendar_ops`) so `mail_ops.rs` stays under the 500-line limit; it
-//! reuses the send + account helpers that live in `mail_ops.rs` (`send_draft`,
-//! `account_identity`, `compose_account`, `fail_send`, `find_message_in`).
+//! Rich-compose mail operations: the send every composer makes, plus the reply-recipient
+//! suggestion a reply opens with. A second `impl App` block (like `reading`/`calendar_ops`) so
+//! `mail_ops.rs` stays under the 500-line limit; it reuses the send and account helpers that live
+//! in `mail_ops.rs` (`send_draft`, `account_identity`, `compose_account`, `fail_send`,
+//! `find_message_in`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,10 +16,8 @@ use mailcal_composer::{
 
 use crate::{
     App, CompositionId,
-    helpers::{forward_subject, new_message_id, reply_subject},
-    mail_compose_quote::{
-        quotes_reference_inline_images, reattach_quote_cids, sanitize_quote_bodies,
-    },
+    helpers::new_message_id,
+    mail_compose_quote::{reattach_quote_cids, sanitize_quote_bodies},
     protocol::{ComposerBlob, RecipientSuggestion},
     reference::MessageRef,
 };
@@ -27,10 +25,11 @@ use crate::{
 impl<P: Provider> App<P> {
     /// Renders a shared composer document, resolves host blob bytes, and submits the
     /// resulting rich draft through the durable outbox. `from` is the account the user picked in
-    /// the composer's From dropdown; `None` derives it ([`App::compose_account`]: the selected
-    /// account, else the default send account, else the first). The `to`/`cc`/`bcc` fields are
-    /// the host's comma-separated recipient lists (see [`parse_addresses`]); Bcc recipients are
-    /// delivered but hidden by the engine.
+    /// the composer's From dropdown; `None` sends from the account `composition` opened on, and
+    /// derives one for a composition the core was never told of ([`App::compose_account`]: the
+    /// selected account, else the default send account, else the first). The `to`/`cc`/`bcc` fields
+    /// are the host's comma-separated recipient lists (see [`parse_addresses`]); Bcc recipients
+    /// are delivered but hidden by the engine.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn submit_rich_mail(
         &self,
@@ -43,7 +42,12 @@ impl<P: Provider> App<P> {
         blobs: Vec<ComposerBlob>,
         composition: Option<CompositionId>,
     ) {
-        let account = match from {
+        // Without a From, a composition goes out from the account it opened on, the one its
+        // saves go to: a reply from the account that received the original.
+        let opened_on = composition
+            .as_ref()
+            .and_then(|composition| self.composition_account(composition));
+        let account = match from.or(opened_on) {
             Some(account) => account,
             // No accounts configured at all, nothing to send from, and nothing to report.
             None => match self.compose_account().await {
@@ -81,159 +85,6 @@ impl<P: Provider> App<P> {
             .await;
     }
 
-    /// Replies to `message` with a rich composer `document`, by default **from the account that
-    /// received it** (the reference's account); `from` overrides that with the account the user
-    /// picked in the composer's From dropdown, so a reply can go out from a different mailbox.
-    /// Uses the host-supplied `to`/`cc`/`bcc` recipients (the host pre-fills these from
-    /// [`App::reply_recipients`] and the user may edit them), takes the `subject` the user left
-    /// in the composer (falling back to a derived `Re:` when the caller has no subject field),
-    /// derives the `In-Reply-To`/`References` chain from the stored original so the reply
-    /// threads, renders the rich draft, then sends through the sending account's outbox. A no-op
-    /// if the original can't be resolved; a render/blob failure surfaces as a failed send.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn submit_rich_reply(
-        &self,
-        message: MessageRef,
-        from: Option<AccountId>,
-        to: String,
-        cc: String,
-        bcc: String,
-        subject: Option<String>,
-        document: ComposerDocument,
-        blobs: Vec<ComposerBlob>,
-        composition: Option<CompositionId>,
-    ) {
-        let Some(original) = self.find_message_in(&message).await else {
-            return;
-        };
-        // The composer's Subject field is editable on a reply, so what the user left there wins;
-        // the derived `Re:` is the fallback for a caller that has no such field to read.
-        let subject =
-            subject.unwrap_or_else(|| reply_subject(original.envelope.subject.as_deref()));
-        // The original always lives in `message.account`, only the *sending* account can differ.
-        let account = from.unwrap_or_else(|| message.account.clone());
-        let Some(identity) = self.identity_or_fail(&account).await else {
-            return;
-        };
-        let to = parse_addresses(&to);
-        let cc = parse_addresses(&cc);
-        let bcc = parse_addresses(&bcc);
-        if to.is_empty() && cc.is_empty() && bcc.is_empty() {
-            // No resolvable recipient; never send a recipient-less reply.
-            self.fail_send().await;
-            return;
-        }
-        // Re-attach the quoted original's inline images as `cid:` parts on the way out (see
-        // `original_inline_parts`); best-effort, so a fetch failure just leaves them as `data:`.
-        // Skip the fetch entirely when no quote carries an inline image: the common reply.
-        let inline_parts = if quotes_reference_inline_images(&document) {
-            self.original_inline_parts(&message, &original).await
-        } else {
-            Vec::new()
-        };
-        let Some(mut draft) = new_message_id().and_then(|message_id| {
-            rich_draft(
-                message_id,
-                &identity,
-                to,
-                cc,
-                bcc,
-                subject,
-                document,
-                blobs,
-                &inline_parts,
-            )
-        }) else {
-            self.fail_send().await;
-            return;
-        };
-        // Thread the reply: In-Reply-To the original, References = its chain + itself.
-        if let Some(parent) = original.envelope.message_id.first() {
-            let mut references = original.envelope.references.clone();
-            references.push(parent.clone());
-            draft = draft.in_reply_to(parent.clone(), references);
-        }
-        self.send_draft(&account, &draft, composition.as_ref())
-            .await;
-    }
-
-    /// Forwards `message` with a rich composer `document` to the host-supplied `to`/`cc`/`bcc`
-    /// recipients, under the `subject` the user left in the composer (a derived `Fwd:` when the
-    /// caller has no subject field). Sends from the reference's account by
-    /// default; `from` overrides that with the account the user picked in the composer's From
-    /// dropdown. A no-op if the original can't be resolved; a render/blob-resolution failure
-    /// surfaces as a failed send.
-    ///
-    /// A forward carries the original's `References` chain but **no** `In-Reply-To`: it
-    /// continues the conversation without answering a message. That is what puts the sent
-    /// copy on the thread it came from; without it, every forward you send is a new
-    /// one-message conversation sitting beside the discussion it belongs to.
-    ///
-    /// The original's **files** reach this through `blobs` like any other attachment: the
-    /// composer opened holding them ([`App::stage_message_attachments`]) and the user may
-    /// have removed some, so what arrives here is what they chose to send.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn submit_rich_forward(
-        &self,
-        message: MessageRef,
-        from: Option<AccountId>,
-        to: String,
-        cc: String,
-        bcc: String,
-        subject: Option<String>,
-        document: ComposerDocument,
-        blobs: Vec<ComposerBlob>,
-        composition: Option<CompositionId>,
-    ) {
-        let Some(original) = self.find_message_in(&message).await else {
-            return;
-        };
-        let subject =
-            subject.unwrap_or_else(|| forward_subject(original.envelope.subject.as_deref()));
-        // The original always lives in `message.account`, only the *sending* account can differ.
-        let account = from.unwrap_or_else(|| message.account.clone());
-        let Some(identity) = self.identity_or_fail(&account).await else {
-            return;
-        };
-        let to = parse_addresses(&to);
-        let cc = parse_addresses(&cc);
-        let bcc = parse_addresses(&bcc);
-        if to.is_empty() && cc.is_empty() && bcc.is_empty() {
-            // No resolvable recipient; never send a recipient-less draft.
-            self.fail_send().await;
-            return;
-        }
-        let inline_parts = if quotes_reference_inline_images(&document) {
-            self.original_inline_parts(&message, &original).await
-        } else {
-            Vec::new()
-        };
-        let Some(mut draft) = new_message_id().and_then(|message_id| {
-            rich_draft(
-                message_id,
-                &identity,
-                to,
-                cc,
-                bcc,
-                subject,
-                document,
-                blobs,
-                &inline_parts,
-            )
-        }) else {
-            self.fail_send().await;
-            return;
-        };
-        // Thread the forward: References = the original's chain + the original itself.
-        if let Some(parent) = original.envelope.message_id.first() {
-            let mut references = original.envelope.references.clone();
-            references.push(parent.clone());
-            draft = draft.with_references(references);
-        }
-        self.send_draft(&account, &draft, composition.as_ref())
-            .await;
-    }
-
     /// Computes the suggested recipients for a reply (or reply-all) to `message`, for a
     /// host to pre-fill the composer's editable `To`/`Cc` fields before the user sends.
     ///
@@ -252,6 +103,18 @@ impl<P: Provider> App<P> {
         let Some(original) = self.find_message_in(&message).await else {
             return RecipientSuggestion::default();
         };
+        self.reply_recipients_of(&message, &original, reply_all)
+            .await
+    }
+
+    /// [`reply_recipients`](Self::reply_recipients) for a caller that has already resolved the
+    /// original, so it is not looked up again.
+    pub(crate) async fn reply_recipients_of(
+        &self,
+        message: &MessageRef,
+        original: &Message,
+        reply_all: bool,
+    ) -> RecipientSuggestion {
         let mut seen: HashSet<String> = HashSet::new();
         // The To leads with ALL the primary recipients: the original's Reply-To if it has any,
         // else its From. They go in unconditionally (a reply must have a recipient) even when
@@ -293,7 +156,7 @@ impl<P: Provider> App<P> {
     /// already cached ([`engine_api::Engine::message_inline_parts`]). Best-effort: no
     /// account/provider or a fetch error yields an empty list, so the quote simply keeps
     /// its `data:` images rather than failing the send.
-    async fn original_inline_parts(
+    pub(crate) async fn original_inline_parts(
         &self,
         message: &MessageRef,
         original: &Message,

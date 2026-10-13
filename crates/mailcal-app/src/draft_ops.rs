@@ -29,12 +29,14 @@ use crate::{
 
 mod digest;
 mod from_outbox;
+mod open;
 mod reopen;
-pub(crate) mod resume;
+mod resume;
 mod state;
 
-pub(crate) use state::DraftState;
-use state::{Composition, Threading};
+pub use open::{ComposeOrigin, ComposePrefill};
+use state::Composition;
+pub(crate) use state::{DraftState, Threading};
 
 /// How long a composer sits untouched before its draft is saved.
 ///
@@ -305,14 +307,9 @@ impl<P: Provider> App<P> {
         }
     }
 
-    /// The account a composition is already stored under, if it has been saved.
-    fn composition_account(&self, composition: &CompositionId) -> Option<AccountId> {
-        self.drafts
-            .lock()
-            .expect("drafts mutex poisoned")
-            .open
-            .get(composition)
-            .map(|open| open.account.clone())
+    /// The account a composition opened on or was first saved under, which its saves go to.
+    pub(crate) fn composition_account(&self, composition: &CompositionId) -> Option<AccountId> {
+        self.joined(Some(composition), |open| open.account.clone())
     }
 
     /// The header every save of this composition carries, starting one if this is its first
