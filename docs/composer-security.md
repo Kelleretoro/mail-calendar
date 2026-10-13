@@ -102,6 +102,18 @@ port:
    the resulting attachment id/blob handle/metadata.
 7. **Pasted HTML is sanitised before insertion.** The client/editor strips scripts, event handlers,
    frames, forms, remote resources, and unsupported CSS; Rust validation is the final authority.
+   The shared bundle (`paste.ts`) never inserts the clipboard's markup: it parses it into an inert
+   document, reads text and a closed set of marks out of it, and builds new markup in the editor's
+   own shapes. What survives is what the schema holds: paragraphs, line breaks, bold, italic,
+   underline, links (only the schemes Gate 16 allows), lists and tables. Bold, italic and underline
+   are read from a style sheet's class rules as well as from tags and inline styles, because Excel
+   marks every cell that way; the sheet is parsed into a stylesheet that is never applied, and
+   nothing else in it is read. Fonts, sizes and colours from outside are dropped, because a word
+   processor stamps one on every run and a page in dark mode stamps a light one; the editor's own
+   `data-*` colour, highlight and size stamps survive, so text moved within a draft keeps them. A
+   paste that asks for plain text carries no HTML and stays plain, so every platform must offer
+   one: WebKitGTK binds nothing to Ctrl+Shift+V, so the Linux host gives that chord WebKit's
+   `PasteAsPlainText` command itself.
 8. **Draft body text is sensitive.** Do not log editor JSON, rendered HTML, plain text, or pasted
    content. Logs may include lengths, counts, ids, and validation error categories.
 9. **External dispatches stay gated.** If a future feature fetches a remote image, uploads to a cloud
@@ -159,8 +171,14 @@ port:
       inline image at the caret, carrying its bytes in the document as a base64 `data:image/…` URI
       (`mailcal_composer::DraftAttachment::data_url`); the core decodes it into the `cid:`
       `multipart/related` part the sent body points at, the same destination a signature's logo
-      reaches. Everything else pasted stays plain text (Gate 7). One implementation, so a pasted
+      reaches. Formatted text is mapped onto the schema (Gate 7). One implementation, so a pasted
       screenshot behaves identically on all four hosts.
+
+      **Formatted text beats a picture beside it.** A spreadsheet, a word processor or a
+      presentation puts a rendering of the selection on the clipboard next to its HTML (ONLYOFFICE
+      offers a PNG of the copied cells), so a picture offered with HTML that holds text is a
+      picture *of* that text, and the HTML is what is pasted. A browser's Copy Image offers HTML
+      too, but only an `<img>` with no text, so the picture arrives there (`pasteContent`).
 
       ⚠️ **Except where the WebView tells the page nothing.** WebKitGTK's paste `DataTransfer`
       answers `getData` for the text flavours and nothing else: `types`, `items` and `files` are
@@ -173,8 +191,11 @@ port:
       `composer_image_data_url_from_bytes`: the byte-shaped twin of the call a dropped file makes,
       same cap, same closed raster set, because a picture with no path on it is not a picture with
       fewer rules. It takes a paste **only** when the clipboard actually holds a picture, so text
-      is still the page's, and so is the plain-text paste Ctrl+Shift+V asks for. A host whose
-      WebView *does* deliver files must not do this: it would paste the picture twice.
+      is still the page's, and so is the plain-text paste Ctrl+Shift+V asks for (Gate 7). When HTML
+      is offered beside the picture, the host first hands that HTML to the bundle's
+      `pasteComposerHtml`, which applies the rule above and answers whether it pasted anything; the
+      picture is read only when it did not. A host whose WebView *does* deliver files must not do
+      this: it would paste the picture twice.
 
       **A clipboard carries a picture two ways, and both are ordinary.** A screenshot tool or a
       browser's Copy Image puts the *pixels* there. A file manager's Copy puts a *reference to the
@@ -336,7 +357,8 @@ hook. Add a toolbar control and the label goes in all four clients in the same c
 | New windows blocked | no popup-opening `WKUIDelegate` path | no popup path; navigation cancelled | `NewWindowRequested.Handled = true` | `create → None`; `NewWindowAction` is ignored |
 | No arbitrary file/content access | file picking via native panel/picker only; no web file URLs; Rust reads selected paths on submit | `allowFileAccess = false`, `allowContentAccess = false`; native picker stages content to app cache; Rust reads staged paths on submit | no arbitrary file access; native picker only; Rust reads selected paths on submit | file/universal access disabled; native `GtkFileDialog` paths are passed to Rust only on submit |
 | Paste/import sanitisation | editor paste rules plus Rust validation | editor paste rules plus Rust validation | editor paste rules plus Rust validation | shared editor paste rules plus Rust validation |
-| Pasted picture → inline `cid:` | shared bundle (`imageFilesFrom` + `insertCapturedImage`) | (same: shared bundle) | (same: shared bundle) | shared bundle **plus a host clipboard read**: this WebView hands the page no files at all, so `composer_paste` takes the chord and the context menu's Paste, sniffs the bytes through the core and feeds the same seam a drop does |
+| Plain-text paste carries no HTML (Gate 7) | Paste and Match Style, WebKit's own | the selection menu's Paste as plain text, Chromium's own | Ctrl+Shift+V, Chromium's own | Ctrl+Shift+V, which WebKitGTK leaves unbound, given `PasteAsPlainText` by the host (`editor_paste`) |
+| Pasted picture → inline `cid:`, unless HTML with text is beside it | shared bundle (`pasteContent` + `insertCapturedImage`) | (same: shared bundle) | (same: shared bundle) | shared bundle **plus a host clipboard read**: this WebView hands the page no files at all, so `editor_paste` takes the chord and the context menu's Paste, offers any HTML to `pasteComposerHtml` first, then sniffs the picture's bytes through the core and feeds the same seam a drop does |
 | Link editor drawn by the host, over its window (Gate 16) | `LinkDialog` in a sheet: a labelled form on macOS, a medium-height sheet on iPhone/iPad | Material `AlertDialog` inside the composer's own `Dialog` | `ContentDialog` in the composer; the signature editor keeps the bundle's popover (see "Known gaps") | `AdwAlertDialog` with two entry rows |
 | Links made in the bundle, target re-checked in Rust (Gate 16) | shared bundle (`links.ts`, `link_menu.ts`) plus `mailcal_composer::LinkUrl` on submit | (same: shared bundle and core) | (same: shared bundle and core) | (same: shared bundle and core) |
 | Picture resized by dragging a corner | shared bundle (`installImageResize`), Pointer Events for mouse, trackpad, pen and finger alike | (same: shared bundle) | (same: shared bundle) | (same: shared bundle) |
@@ -402,9 +424,19 @@ hook. Add a toolbar control and the label goes in all four clients in the same c
 - **A dropped picture is read on the main thread everywhere except Android.** Android stages and
   reads off it; Apple, Windows and Linux read inline from the dialog's answer, which is a stall of
   tens of milliseconds for a file within the cap and has not been worth a thread yet.
-- **Pasted text stays plain text.** Formatting from Word, Outlook or a browser is dropped on paste,
-  which is the strict reading of Gate 7 rather than an oversight. Mapping pasted HTML onto the closed
-  document schema is its own piece of work.
+- **A pasted list from Word arrives as lines, not as a list.** Word writes a list to the clipboard
+  as paragraphs that draw the bullet or number in text (its `mso-list` markup), not as `<ul>` or
+  `<ol>`, so each item pastes as a paragraph starting with that character. A list from a browser,
+  Google Docs or another mail client is a real list and pastes as one.
+- **A pasted table cell merged across rows shifts the row below it.** A merged column (`colspan`)
+  is padded so the cells after it stay in place; a merged row (`rowspan`) is not, so the next row's
+  cells move one column left. Placing them needs a grid of which cells are taken.
+- **On Android, a keyboard's clipboard strip pastes plain text.** The keyboard types the clip in
+  through the input method rather than pasting it, so the page sees no paste event and no HTML
+  (measured with Samsung Keyboard). The WebView's own Paste, from a long press, keeps the
+  formatting.
+- **A picture inside pasted HTML is dropped.** The markup names it by URL and the composer fetches
+  nothing (Gate 3); a picture copied on its own is a file on the clipboard and pastes inline.
 - **Undo does not take back a link the editor made by itself.** An address becoming a link on
   Space is a DOM edit, not an engine command, so it is not on the WebView's undo stack; Remove link
   in the link editor is the way back. The `- ` bullet has the same shape.
