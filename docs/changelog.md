@@ -267,6 +267,7 @@ proves that `/VERSION` does, and that no note claims a version above it.
 
 | Version | Date | What shipped |
 |---|---|---|
+| [0.12.1](changelog/released/0.12.1.md) | 2026-10-14 | The Linux app is built again |
 | [0.12.0](changelog/released/0.12.0.md) | 2026-10-13 | A draft reopens as it was written · A suggested link on Linux · Every account in Settings → Accounts on Android, each with a page of its own · …51 more |
 | [0.11.0](changelog/released/0.11.0.md) | 2026-10-06 | A send survives the app closing, and a refused one is kept · Drag folders and messages onto a folder · Every account in Settings on Linux · …22 more |
 | [0.10.1](changelog/released/0.10.1.md) | 2026-09-27 | Download an IMAP account's messages in batches, over several connections · A mail server's connection limit is no longer reported as a wrong password · A quieter folder pane on iPad and iPhone · …8 more |
