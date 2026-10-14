@@ -584,6 +584,8 @@ jobs:
       # Measured, against the macOS leg as the control, which boots nothing: started before these
       # steps, the DerivedData restore and the rustup install went from 1s and 10s to 105-152s and
       # 129-136s; started after them, this core build went from 63s for two slices to 242s for one.
+      # Caching a booted device is no way round it either: its second boot cost as much CPU as its
+      # first (~450 CPU-seconds in two minutes on an M2), and the device is 1.9 GB by then.
       - name: Build the Rust core -> XCFramework + bindings
         run: ./clients/apple/Scripts/build-core.sh --slices ${{ matrix.slice }}
 
@@ -631,14 +633,15 @@ jobs:
             -derivedDataPath build/DerivedData -quiet COMPILER_INDEX_STORE_ENABLE=NO build
           MAILCAL_DEMO=1 ./build/DerivedData/Build/Products/Debug/MailcalVerify
 
-      # The UI suite (clients/apple/UITests), on the simulator booted at the top of this leg. Every
-      # test drives the in-memory showcase dataset, so this needs no Docker harness, no account and
-      # no network, which is the same trade the Windows UI job makes with `-Dataset showcase,first-run`.
+      # The UI suite (clients/apple/UITests), on a simulator the script boots once the app is
+      # built. Every test drives the in-memory showcase dataset, so this needs no Docker harness, no
+      # account and no network, which is the same trade the Windows UI job makes with
+      # `-Dataset showcase,first-run`.
       #
-      # This is also what builds the iOS app, in one xcodebuild rather than two. A separate build
-      # step would resolve the package graph and plan the build a second time for products this one
-      # already has, and a `generic/platform=iOS Simulator` destination has no active arch, so it
-      # can compile x86_64 beside the arm64 the tests actually run.
+      # This is also what builds the iOS app, against the same simulator it then tests on: a
+      # `generic/platform=iOS Simulator` destination has no active arch, so it can compile x86_64
+      # beside the arm64 the tests actually run. The script builds before it boots the simulator,
+      # and says why.
       #
       # **Three classes of five, and that is a budget rather than a judgement about the other two.**
       # A UI test costs what no other gate here costs: a simulator to boot and then the app's own
