@@ -53,6 +53,8 @@ pub(super) struct EventDetails {
     pub(super) can_write: bool,
     /// Whether this account organises the meeting and may change who is invited.
     pub(super) can_edit_invitees: bool,
+    /// This account's own answer, when it may change it from the detail.
+    pub(super) my_answer: Option<mailcal_bindings::ResponseStatus>,
     /// The occurrence this detail describes, as the **core resolved** it; empty when it
     /// describes the series, which is what an agenda row and a one-off event always do. Non-empty
     /// is what makes a write ask *This event · All events* first.
@@ -63,6 +65,17 @@ pub(super) struct EventDetails {
 }
 
 impl EventDetails {
+    /// This event as the store holds it now, for a detail that stays open across a write; `None`
+    /// when it is no longer there to read.
+    pub(super) fn reread(&self, app: &mailcal_bindings::MailcalApp) -> Option<Self> {
+        let detail = app.event_detail(
+            self.account.clone(),
+            self.key.clone(),
+            Some(self.occurrence.clone()),
+        )?;
+        Some(Self::from_binding(detail, self.calendar_name.clone()))
+    }
+
     pub(super) fn from_binding(detail: EventDetail, calendar_name: String) -> Self {
         Self {
             account: detail.account,
@@ -83,6 +96,7 @@ impl EventDetails {
             is_recurring: detail.is_recurring,
             can_write: detail.can_write,
             can_edit_invitees: detail.can_edit_invitees,
+            my_answer: detail.my_answer,
             occurrence: detail.occurrence_start,
             attendees: detail.attendees,
         }
