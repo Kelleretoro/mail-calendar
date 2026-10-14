@@ -19,6 +19,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Allodia.Mailcal.Tests</RootNamespace>
     <Nullable>enable</Nullable>
+    <!-- Warnings are hard errors, as they are in the app (Mailcal.csproj). -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <!-- The generated UniFFI bindings contain unsafe blocks (they marshal RustBuffer by pointer).
@@ -123,6 +125,7 @@
     <!-- Which other dev builds' claims on the dev scheme a launch withdraws. The registry walk and
          the Windows App SDK calls stay in Program.cs; the decision is plain BCL. -->
     <Compile Include="..\Mailcal\Services\DevSchemeOwnership.cs" Link="Services\DevSchemeOwnership.cs" />
+    <Compile Include="..\Mailcal\Services\WebViewInspection.cs" Link="Services\WebViewInspection.cs" />
     <!-- Where the MCP server listens and what an assistant is told to spawn (docs/mcp.md). Every
          value in it has to match something outside the file, the pipe name the core binds, the
          alias the app manifest registers, the config key the protocol advertises, and all three

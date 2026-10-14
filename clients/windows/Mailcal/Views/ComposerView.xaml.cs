@@ -15,9 +15,8 @@ using Allodia.Mailcal.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using uniffi.mailcal_bindings;
+using Microsoft.Windows.Storage.Pickers;
 using Windows.Storage;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
 
 namespace Allodia.Mailcal.Views;
 
@@ -26,7 +25,11 @@ namespace Allodia.Mailcal.Views;
 /// reply/reply-all open with To/Cc pre-filled from the core, new/forward open empty, and every
 /// kind edits the Subject (a reply/forward opens with the core's derived Re:/Fwd:). Every kind
 /// shares the one hardened editor host.</summary>
+// WUI4002 looks for the WebView2's initialisation in this file only. It happens in EditorWebView,
+// the host every composer and the signature editor share (Services/EditorWebView.cs).
+#pragma warning disable WUI4002
 public sealed partial class ComposerView : UserControl
+#pragma warning restore WUI4002
 {
     private readonly List<PickedComposerAttachment> _attachments = new();
     private MailboxModel? _model;
@@ -364,43 +367,6 @@ public sealed partial class ComposerView : UserControl
         }
     }
 
-    private async void OnAttachFiles(object sender, RoutedEventArgs e)
-    {
-        var picker = new FileOpenPicker();
-        picker.FileTypeFilter.Add("*");
-        if (App.MainWindow is not null)
-        {
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(App.MainWindow));
-        }
-        var files = await picker.PickMultipleFilesAsync();
-        foreach (var file in files)
-        {
-            if (string.IsNullOrEmpty(file.Path))
-            {
-                continue;
-            }
-            _attachments.Add(new PickedComposerAttachment(
-                new ComposerFileAttachment(file.Path, file.Name, MediaType(file))));
-        }
-        AttachmentList.ItemsSource = null;
-        AttachmentList.ItemsSource = _attachments;
-    }
-
-    private void OnRemoveAttachment(object sender, RoutedEventArgs e)
-    {
-        if (AttachmentList.SelectedItem is not PickedComposerAttachment selected)
-        {
-            return;
-        }
-        _attachments.Remove(selected);
-        AttachmentList.ItemsSource = null;
-        AttachmentList.ItemsSource = _attachments;
-        RemoveAttachmentButton.IsEnabled = false;
-    }
-
-    private void OnAttachmentSelectionChanged(object sender, SelectionChangedEventArgs e) =>
-        RemoveAttachmentButton.IsEnabled = AttachmentList.SelectedItem is not null;
-
     // The editor bundle has finished loading, so its window.* hooks now exist. Doing this here,
     // not right after the load, is what guarantees that; a hook called any earlier lands on an
     // undefined function and fails silently.
@@ -470,17 +436,5 @@ public sealed partial class ComposerView : UserControl
             // Leaves _seedDocument null: IsDirtyAsync then falls back to the header fields alone.
             Log.Warn($"composer: couldn't seed the editor ({ex.GetType().Name})");
         }
-    }
-
-    private static string MediaType(StorageFile file) =>
-        string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
-
-    private sealed class PickedComposerAttachment
-    {
-        public PickedComposerAttachment(ComposerFileAttachment file) => File = file;
-
-        public ComposerFileAttachment File { get; }
-
-        public string DisplayName => File.FileName;
     }
 }

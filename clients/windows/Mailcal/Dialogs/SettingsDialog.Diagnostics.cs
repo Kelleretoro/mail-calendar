@@ -20,9 +20,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
-using Windows.Storage;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
+using Microsoft.Windows.Storage.Pickers;
 
 namespace Allodia.Mailcal.Dialogs;
 
@@ -212,35 +210,34 @@ public sealed partial class SettingsDialog
     // Android/Apple share hands over (docs/logging.md); backups stay on the device.
     private static async Task ExportLogAsync()
     {
-        StorageFile? file;
+        string? path;
         try
         {
-            var picker = new FileSavePicker { SuggestedFileName = "allodia-mail-diagnostics" };
+            var picker = new FileSavePicker(PickerOwner.For(null)) { SuggestedFileName = "allodia-mail-diagnostics" };
             picker.FileTypeChoices.Add(L10n.DiagnosticsLogHeading(), new List<string> { ".log" });
-            if (App.MainWindow is not null)
-            {
-                InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(App.MainWindow));
-            }
-            file = await picker.PickSaveFileAsync();
+            path = (await picker.PickSaveFileAsync())?.Path;
         }
         catch (Exception ex)
         {
             Log.Warn($"diagnostics export picker failed: {ex.GetType().Name}");
             return;
         }
-        if (file is null)
+        if (string.IsNullOrEmpty(path))
         {
             return; // the user cancelled the picker
         }
         var ok = false;
+        var written = false;
         try
         {
             // Buffered under the log gate (rotation caps it at ~1 MB), so this write never
             // races the logger.
             var bytes = Log.ExportSnapshot();
-            await using var output = await file.OpenStreamForWriteAsync();
-            output.SetLength(0);
-            await output.WriteAsync(bytes);
+            await using (var output = File.Create(path))
+            {
+                written = true;
+                await output.WriteAsync(bytes);
+            }
             ok = true;
             Log.Info($"diagnostics: log exported ({bytes.Length} bytes)");
         }
@@ -251,10 +248,14 @@ public sealed partial class SettingsDialog
         }
         if (!ok)
         {
-            // Don't leave a half-written or empty file at the user's chosen path.
+            // Don't leave a half-written file at the user's chosen path. Only one this export
+            // began writing: a failure before that leaves a file being replaced as it was.
             try
             {
-                await file.DeleteAsync();
+                if (written)
+                {
+                    File.Delete(path);
+                }
             }
             catch
             {
