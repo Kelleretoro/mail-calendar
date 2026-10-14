@@ -53,6 +53,7 @@ private fun calendarRow(id: String) = CalendarRow(
     ),
     visible = true,
     canWrite = true,
+    canInvite = false,
     isDefault = true,
 )
 
@@ -73,6 +74,7 @@ private fun eventDetail() = EventDetail(
     repeatDraft = null,
     isRecurring = false,
     canWrite = true,
+    canEditInvitees = false,
     occurrenceStart = "",
     attendees = emptyList(),
 )

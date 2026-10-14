@@ -170,7 +170,9 @@ impl<P: Provider> App<P> {
         notes: Option<String>,
         location: Option<String>,
         recurrence: Option<mailcal_account::SimpleRecurrence>,
+        invitees: Option<Vec<engine_api::Invitee>>,
     ) {
+        let chosen = account.clone();
         let Some(account) = self.create_account(account).await else {
             return;
         };
@@ -188,7 +190,7 @@ impl<P: Provider> App<P> {
             return;
         };
         let uid = generated_uid();
-        let Ok(draft) = mailcal_account::build_event_draft(
+        let Ok(mut draft) = mailcal_account::build_event_draft(
             calendar.id.clone(),
             &uid,
             &title,
@@ -203,6 +205,16 @@ impl<P: Provider> App<P> {
         ) else {
             return;
         };
+        if let Some(invitees) = invitees {
+            let Some(meeting) = self
+                .meeting_draft(chosen.as_deref(), &account, draft, invitees)
+                .await
+            else {
+                self.set_calendar_write_status(CalendarWriteStatus::Failed);
+                return;
+            };
+            draft = meeting;
+        }
         // Clone the account handle, then write with the read guard released.
         let mut status = None;
         if let Some(acct) = self.account_handle(&account).await
@@ -264,6 +276,14 @@ impl<P: Provider> App<P> {
         {
             self.set_calendar_write_status(CalendarWriteStatus::Failed);
             return Err("the edit names no occurrence of this series".to_owned());
+        }
+        if let Some(changes) = edit.invitees.as_ref().filter(|changes| !changes.is_empty())
+            && !self
+                .may_apply_roster(&event.account, &stored, changes)
+                .await
+        {
+            self.set_calendar_write_status(CalendarWriteStatus::Failed);
+            return Err("this account may not change the meeting's invitees".to_owned());
         }
 
         let (target, patch) = mailcal_account::build_event_patch(&stored, edit, now_utc()?)
@@ -468,3 +488,7 @@ impl<P: Provider> App<P> {
         self.calendar_account().await
     }
 }
+
+/// Where a meeting may be organised, and as whom: the create and the roster edit above both ask.
+#[path = "calendar_meeting.rs"]
+mod meeting;

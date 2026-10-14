@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use engine_api::Provider;
 use mailcal_account::{
-    EventDetail, EventEdit, SeriesEditWarning, project_event_detail, series_edit_touches,
-    series_edit_warning,
+    EventDetail, EventEdit, InviteeEditability, SeriesEditWarning, project_event_detail,
+    series_edit_touches, series_edit_warning,
 };
 
 use crate::{App, reference::EventRef};
@@ -42,7 +42,18 @@ impl<P: Provider> App<P> {
             Some(token) => self.resolve_occurrence(event, &stored, token).await,
             None => None,
         };
-        let detail = project_event_detail(event.account.as_str(), &stored, can_write, at.as_ref());
+        let invitee_editability = if self.may_change_roster(&event.account, &stored).await {
+            InviteeEditability::Editable
+        } else {
+            InviteeEditability::ReadOnly
+        };
+        let detail = project_event_detail(
+            event.account.as_str(),
+            &stored,
+            can_write,
+            at.as_ref(),
+            invitee_editability,
+        );
         log::info!(
             "event_detail: resolved in {}ms",
             started.elapsed().as_millis()

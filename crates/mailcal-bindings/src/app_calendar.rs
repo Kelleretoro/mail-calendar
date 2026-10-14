@@ -132,6 +132,8 @@ impl From<AppEventDetail> for EventDetail {
             recurrence: detail.recurrence.map(Into::into),
             is_recurring: detail.is_recurring,
             can_write: detail.can_write,
+            can_edit_invitees: detail.invitee_editability
+                == mailcal_account::InviteeEditability::Editable,
             repeat_summary: detail.repeat_summary.map(Into::into),
             repeat_draft: detail.repeat_draft.map(Into::into),
             occurrence_start: detail.occurrence_start,
@@ -142,6 +144,14 @@ impl From<AppEventDetail> for EventDetail {
                     name: attendee.name,
                     email: attendee.email,
                     is_organizer: attendee.is_organizer,
+                    role: attendee.role.map(|role| match role {
+                        mailcal_viewmodel::EventAttendeeRole::Required => {
+                            crate::MeetingInviteeRole::Required
+                        }
+                        mailcal_viewmodel::EventAttendeeRole::Optional => {
+                            crate::MeetingInviteeRole::Optional
+                        }
+                    }),
                     response: attendee.response.into(),
                 })
                 .collect(),
@@ -220,6 +230,7 @@ impl From<AppCalendarRow> for CalendarRow {
             color: row.color.into(),
             visible: row.visible,
             can_write: row.can_write,
+            can_invite: row.can_invite,
             is_default: row.is_default,
         }
     }

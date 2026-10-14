@@ -39,6 +39,7 @@ private val CALENDARS = listOf(
         ),
         visible = true,
         canWrite = true,
+        canInvite = false,
         isDefault = true,
     ),
 )
@@ -60,6 +61,7 @@ private fun standup() = EventDetail(
     repeatDraft = null,
     isRecurring = false,
     canWrite = true,
+    canEditInvitees = false,
     occurrenceStart = "",
     attendees = emptyList(),
 )
