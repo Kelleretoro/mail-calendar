@@ -57,7 +57,7 @@ extension ContentView {
 
     private var phoneMail: some View {
         NavigationStack {
-            compactMessageList
+            bannered(compactMessageList)
                 .navigationTitle(currentFolderName)
                 // The folder name as a large title, which is what puts it and the search field
                 // under it inside the scroll view: a pull then carries the whole header down and
@@ -74,7 +74,7 @@ extension ContentView {
                     }
                 }
                 .navigationDestination(item: $openedMessage) { opened in
-                    readingView(for: opened)
+                    bannered(readingView(for: opened))
                         // An open message is read, not navigated away from: the height goes to
                         // the message, and Back returns to the list, where the tabs are.
                         .toolbar(.hidden, for: .tabBar)
@@ -85,7 +85,7 @@ extension ContentView {
     private var phoneCalendar: some View {
         NavigationStack {
             // The calendar puts its own title (the period on screen) and items in this bar.
-            calendarDetail
+            bannered(calendarDetail)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .topBarLeading) { sidebarToggle } }
         }
@@ -93,20 +93,20 @@ extension ContentView {
 
     private var phoneContacts: some View {
         NavigationStack {
-            contactsList
+            bannered(contactsList)
                 .navigationTitle(L10n.contacts_title())
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .topBarLeading) { sidebarToggle } }
                 // Tapping a person pushes their detail; Back pops it. The same gesture the reading
                 // view uses, so the phone has one way of opening a row.
                 .navigationDestination(item: $openedContact) { opened in
-                    ContactDetailView(
+                    bannered(ContactDetailView(
                         detail: opened.detail,
                         accountLabels: model.contactAccountLabels,
                         onEdit: opened.detail.editableCards.isEmpty
                             ? nil
                             : { beginEditContact(opened.detail) }
-                    )
+                    ))
                     .navigationTitle(
                         opened.detail.displayName.isEmpty
                             ? L10n.contacts_no_name() : opened.detail.displayName

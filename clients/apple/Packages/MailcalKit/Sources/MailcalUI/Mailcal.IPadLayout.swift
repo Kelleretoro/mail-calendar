@@ -30,7 +30,9 @@ extension ContentView {
                 .navigationBarTitleDisplayMode(.inline)
                 .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 460)
         } detail: {
-            contactsDetailPane
+            // The detail column for the banners, as on every split here: iPadOS shows it in every
+            // orientation, so a banner there is on screen once and always.
+            bannered(contactsDetailPane)
         }
     }
 
@@ -43,7 +45,7 @@ extension ContentView {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 300)
         } detail: {
             // The calendar puts its own title (the period on screen) and items in this bar.
-            calendarDetail
+            bannered(calendarDetail)
                 .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -73,7 +75,7 @@ extension ContentView {
                     }
                 }
         } detail: {
-            readingPane
+            bannered(readingPane)
         }
     }
 }

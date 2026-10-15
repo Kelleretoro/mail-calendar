@@ -101,3 +101,12 @@ struct CalendarToolbar: ToolbarContent {
         .help(L10n.a11y_more_actions())
     }
 }
+
+extension View {
+    /// The calendar's toolbar, and the same actions for the keyboard (`MailcalCommands`),
+    /// withdrawn while something is presented over the calendar.
+    func calendarToolbar(_ state: CalendarHeaderState, regular: Bool, covered: Bool) -> some View {
+        toolbar { CalendarToolbar(state: state, regular: regular) }
+            .focusedSceneValue(\.calendarCommands, covered ? nil : state)
+    }
+}
