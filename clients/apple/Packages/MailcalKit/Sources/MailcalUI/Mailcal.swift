@@ -305,14 +305,13 @@ public struct ContentView: View {
                 address: account.email,
                 unlinked: model.accountEntry(account.id).flatMap(AccountSettingsRules.unlinked)))
         }
-        // The composer takes the whole window on iOS/iPadOS (a form-sheet modal leaves too little
-        // room, especially on iPad). macOS no longer presents it at all: it renders INSIDE the
-        // detail column, in place of the reading pane (macOSLayout), so the sidebar and
-        // the message list stay live while you write. iPad has a reading pane and could take the
-        // same treatment, but a sheet is idiomatic on touch, left as it is, deliberately, so the
-        // two desktop clients land together.
+        // The composer is a page sheet on iPad and the whole screen on iPhone (`taskPresentation`).
+        // macOS no longer presents it at all: it renders INSIDE the detail column, in place of the
+        // reading pane (macOSLayout), so the sidebar and the message list stay live while you
+        // write. iPad has a reading pane and could take the same treatment, but a sheet is
+        // idiomatic on touch, left as it is, deliberately, so the two desktop clients land together.
         #if !os(macOS)
-        .fullScreenCover(item: $compose) { composeContent($0) }
+        .taskPresentation(item: $compose, swipeCloses: false) { composeContent($0) }
         #endif
         // An assistant asked to open a draft (docs/mcp.md). It arrives on the model from another
         // thread via `AgentComposerBridge`; the shell owns `compose`, so this is where it becomes
@@ -355,10 +354,10 @@ public struct ContentView: View {
         }
         // Settings. One taxonomy (docs/settings.md), three chromes over the shared
         // SettingsCategoryDetail: macOS a sidebar+detail window, iPad a two-pane split, iPhone a
-        // hub-and-spoke. iOS presents full-screen (like the composer): the iPad split needs a
-        // regular-width container to show its two panes side by side, a form sheet is compact and
-        // would collapse it to the iPhone hub, and iPhone reads as compact and shows the hub either
-        // way. macOS keeps the sheet.
+        // hub-and-spoke. iOS presents it like the composer (`taskPresentation`): the iPad split
+        // needs a regular-width container to show its two panes side by side, which a page sheet
+        // keeps and a form sheet does not (it is compact and would collapse it to the iPhone hub),
+        // and iPhone reads as compact and shows the hub either way. macOS keeps the sheet.
         #if os(macOS)
         .sheet(item: $settingsCategory, onDismiss: addAccountIfSettingsAskedFor) { category in
             SettingsView(
@@ -369,14 +368,16 @@ public struct ContentView: View {
             )
         }
         #else
-        .fullScreenCover(item: $settingsCategory, onDismiss: addAccountIfSettingsAskedFor) { category in
+        .taskPresentation(
+            item: $settingsCategory, onDismiss: addAccountIfSettingsAskedFor, swipeCloses: true
+        ) { category in
             SettingsHubView(
                 model: model,
                 close: { settingsCategory = nil },
                 removeAccount: removeAccount,
                 openOn: category
             )
-            // The appearance again, on the cover's own content. `preferredColorScheme` travels UP
+            // The appearance again, on the presentation's own content. `preferredColorScheme` travels UP
             // to a hosting controller, and on iOS/iPadOS a modal presentation gets its own, it
             // copies the presenter's scheme once, at presentation, and never again. Without this
             // the screen the Appearance picker LIVES ON keeps the old scheme while everything
@@ -384,9 +385,9 @@ public struct ContentView: View {
             // there a sheet shares the presenter's window and follows it live.
             //
             // The window's resolved scheme, NOT `AppearanceMode.colorScheme`, this must never go
-            // back to `nil`. Releasing the preference leaves the cover's controller on the scheme
+            // back to `nil`. Releasing the preference leaves the presented controller on the scheme
             // it was forced to resolve, so "Use system setting" would repaint it once and then
-            // ignore the host for as long as the cover stays open. `windowScheme` is always an
+            // ignore the host for as long as it stays open. `windowScheme` is always an
             // explicit value and already carries both cases.
             .preferredColorScheme(windowScheme)
         }
