@@ -1557,9 +1557,9 @@ The scoped release path is frame-qualified on the packaged runtime (note ¹²).
 | **View** an event (tap → detail) and **edit** it: title, time, notes, location ⁶ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | An event's **attendee list**: organiser first, each with their answer ⁹ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | The same list, **read-only, in the editor** ⁹ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| An **optional** invitee marked as such in both lists ⁹ | ✅ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| **Invite people** to a new event, on a calendar whose server sends the invitations (§4) | ✅ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
-| **Add, remove, or make optional** the invitees of a meeting you organise (§4) | ✅ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
+| An **optional** invitee marked as such in both lists ⁹ | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ |
+| **Invite people** to a new event, on a calendar whose server sends the invitations (§4) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ |
+| **Add, remove, or make optional** the invitees of a meeting you organise (§4) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ |
 | **Answer a meeting** from its event (Accept · Maybe · Decline), for the whole meeting (§4) | ✅ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
 | A **new** event opens with the caret in its title ¹¹ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Write affordances gated on `can_write`: a read-only row offers no delete; "New event" disabled without a writable calendar | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -1782,7 +1782,7 @@ content rather than its ancestor, so a recognizer attached there would only ever
 became the hit target, which would cost the grid every tap it has.
 
 **Hand-verified on 2026-09-03**, on a booted iPad simulator, by a real two-finger trackpad gesture
-over its window. ⚠️ It cannot be verified any other way: the Simulator does not forward a
+over its window. ⚠️ It cannot be verified any other way: the simulator does not forward a
 *synthetic* host scroll into the guest at all, as a real `UIScrollView` on the same screen proves by
 not moving either. A test that injects one passes while measuring nothing.
 

@@ -213,7 +213,7 @@ scripts/dev/control.sh macos find "Reply" --all     # every hit, when a label is
 
 **On iOS/iPadOS, drive by label too, never screenshot-and-guess.** `describe-all` frames and
 `idb ui tap` are both in **points**, so a label resolves straight into a tap with no scaling and no
-Simulator-window arithmetic. `ui-dump` prints the same `Role [x,y] Label` lines the macOS dump does,
+Device Hub window arithmetic. `ui-dump` prints the same `Role [x,y] Label` lines the macOS dump does,
 so a grep ports between them. Reaching for a screenshot to locate a control is the old, expensive
 loop; a dump and a `press` replace it:
 
@@ -274,6 +274,21 @@ idb ui tap --udid <U> <x> <y>                     # a Button is fine instantly
 
 Verify against the switch's real state (`AXValue` is `0`/`1` in `idb ui describe-all`), never against
 "the tap didn't error".
+
+⚠️ **The on-screen keyboard stays down while the simulator simulates a hardware keyboard.** With
+Device Hub's *Device > Keyboard > Simulate Hardware Keyboard* on, the first key typed from outside
+the device (the Mac's, or `idb ui text`, which types through the same path) makes iOS treat a
+keyboard as attached, and from then on no field raises the on-screen one, rebooting included. A
+screen with no keyboard is not what a phone shows: a field it would cover reads as visible, and a
+form that scrolls when the keyboard changes height never scrolls. `build-and-run.sh` turns it off
+when it boots a simulator; to turn it off by hand:
+
+```
+scripts/dev/control.sh iphone hardware-keyboard off
+```
+
+Check for the keyboard rather than assuming it: a dump with it up lists its keys
+(`ui-dump | grep -c "AXButton.* return$"` is non-zero).
 
 **Re-read the frame after every change: iOS layout moves under you.** A centred screen re-centres
 when a disclosure expands, so coordinates from an earlier `describe-all` land on the wrong element

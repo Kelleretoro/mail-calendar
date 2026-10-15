@@ -1,6 +1,6 @@
 // The event editor, one form for both create and edit, matching the flow of the platform calendar
-// the user knows: title, all-day, start/end, calendar, location, notes, with reminder and recurrence
-// shown but not yet editable. Presented as a sheet; the calendar picker is a
+// the user knows: title, all-day, start/end, calendar, location, notes, repeat and invitees, with
+// the reminder shown but not yet editable. Presented as a sheet; the calendar picker is a
 // nested sheet grouped by account. The state and every decision live in EventEditorState.
 
 import MailcalBindings
@@ -22,6 +22,8 @@ struct EventEditorView: View {
     /// What a whole-series save of this payload would cost, the core's decision, asked with the
     /// edit in hand. A closure so the editor stays a pure form with no reach into the app.
     let warningFor: (UpdateArgs) -> SeriesEditWarning?
+    /// The invitee field's completions, the composer's own; `nil` offers none.
+    var suggestionsFor: ((String) async -> [RecipientMatch])?
 
     @State private var picking = false
     /// A Save on an occurrence of a series, waiting for the user to say which occurrences they
@@ -36,120 +38,112 @@ struct EventEditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                // `labelsHidden` is load-bearing, and it is the only thing here that is.
-                //
-                // A labelled `TextField` is a macOS Form's *value*, which the form lays out
-                // trailing-aligned and sized to its content. Trailing whitespace is not counted
-                // in either, so a typed space had no width, the field did not grow and the caret
-                // did not move: the space read as a keystroke the app had swallowed, until the
-                // next word pushed it into view. Hiding the label takes the field out of that
-                // treatment, and it fills the row leading-aligned like the setup screens' fields.
-                //
-                // Measured, because three plausible fixes are not fixes:
-                // `multilineTextAlignment(.leading)` never reaches the field, `roundedBorder`
-                // changes the border and not the alignment, and `frame(maxWidth: .infinity)`
-                // widens the box while leaving the text against its trailing edge. The label is
-                // still read by VoiceOver; `labelsHidden` hides it from the eye only, and the
-                // placeholder carries it for everyone else.
-                // The hidden label leaves the empty field saying nothing, so the same string is
-                // its `prompt`: the placeholder API, which a hidden label does not become.
-                TextField(
-                    L10n.event_title_label(),
-                    text: $editor.title,
-                    prompt: Text(L10n.event_title_label())
-                )
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
-                    .focused($titleFocused)
+            ScrollViewReader { proxy in
+                Form {
+                    // `labelsHidden` is load-bearing, and it is the only thing here that is.
+                    //
+                    // A labelled `TextField` is a macOS Form's *value*, which the form lays out
+                    // trailing-aligned and sized to its content. Trailing whitespace is not counted
+                    // in either, so a typed space had no width, the field did not grow and the caret
+                    // did not move: the space read as a keystroke the app had swallowed, until the
+                    // next word pushed it into view. Hiding the label takes the field out of that
+                    // treatment, and it fills the row leading-aligned like the setup screens' fields.
+                    //
+                    // Measured, because three plausible fixes are not fixes:
+                    // `multilineTextAlignment(.leading)` never reaches the field, `roundedBorder`
+                    // changes the border and not the alignment, and `frame(maxWidth: .infinity)`
+                    // widens the box while leaving the text against its trailing edge. The label is
+                    // still read by VoiceOver; `labelsHidden` hides it from the eye only, and the
+                    // placeholder carries it for everyone else.
+                    // The hidden label leaves the empty field saying nothing, so the same string is
+                    // its `prompt`: the placeholder API, which a hidden label does not become.
+                    TextField(
+                        L10n.event_title_label(),
+                        text: $editor.title,
+                        prompt: Text(L10n.event_title_label())
+                    )
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity)
+                        .focused($titleFocused)
 
-                // All-day is set at create and frozen on edit (the patcher refuses a form change).
-                Toggle(L10n.calendar_all_day(), isOn: $editor.allDay)
-                    .disabled(!editor.canEditForm)
+                    // All-day is set at create and frozen on edit (the patcher refuses a form change).
+                    Toggle(L10n.calendar_all_day(), isOn: $editor.allDay)
+                        .disabled(!editor.canEditForm)
 
-                DatePicker(
-                    L10n.event_start(),
-                    selection: $editor.start,
-                    displayedComponents: editor.allDay ? [.date] : [.date, .hourAndMinute]
-                )
-                DatePicker(
-                    L10n.event_end(),
-                    selection: $editor.end,
-                    displayedComponents: editor.allDay ? [.date] : [.date, .hourAndMinute]
-                )
+                    DatePicker(
+                        L10n.event_start(),
+                        selection: $editor.start,
+                        displayedComponents: editor.allDay ? [.date] : [.date, .hourAndMinute]
+                    )
+                    DatePicker(
+                        L10n.event_end(),
+                        selection: $editor.end,
+                        displayedComponents: editor.allDay ? [.date] : [.date, .hourAndMinute]
+                    )
 
-                // Calendar, a picker on create, display-only on edit (no cross-calendar move yet).
-                Button { if editor.canEditForm { picking = true } } label: { calendarRow }
-                    .disabled(!editor.canEditForm)
-                    .buttonStyle(.plain)
+                    // Calendar, a picker on create, display-only on edit (no cross-calendar move yet).
+                    Button { if editor.canEditForm { picking = true } } label: { calendarRow }
+                        .disabled(!editor.canEditForm)
+                        .buttonStyle(.plain)
 
-                // Location: settable on create and edit alike, the engine's create draft carries it.
-                TextField(
-                    L10n.event_location(),
-                    text: $editor.location,
-                    prompt: Text(L10n.event_location())
-                )
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
-                TextField(
-                    L10n.event_notes(),
-                    text: $editor.notes,
-                    prompt: Text(L10n.event_notes()),
-                    axis: .vertical
-                )
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
+                    // Location: settable on create and edit alike, the engine's create draft carries it.
+                    TextField(
+                        L10n.event_location(),
+                        text: $editor.location,
+                        prompt: Text(L10n.event_location())
+                    )
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity)
+                    TextField(
+                        L10n.event_notes(),
+                        text: $editor.notes,
+                        prompt: Text(L10n.event_notes()),
+                        axis: .vertical
+                    )
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity)
 
-                // Reminder: shown, not yet editable. The repeat is a set of controls when the
-                // core handed over a draft, and the sentence it already decided when it did not.
-                Section {
-                    LabeledContent(L10n.event_reminder(), value: reminderText(editor.editing?.reminderMinutes))
-
-                    if editor.canEditRepeat {
-                        EventRepeatSection(
-                            draft: $editor.repeatDraft,
-                            start: editor.start,
-                            opensOnOneOccurrence: !(editor.editing?.occurrence.isEmpty ?? true)
-                        )
-                    } else {
-                        LabeledContent(
-                            L10n.event_repeat(),
-                            value: recurrenceText(
-                                editor.editing?.repeatSummary,
-                                isRecurring: editor.editing?.isRecurring ?? false
-                            )
-                        )
-                        Text(L10n.event_repeat_locked())
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    // Only when the answer is settled. An editor opened on one occurrence asks
-                    // at Save which occurrences were meant, so stating the answer up here would
-                    // be telling the user something the next dialog contradicts.
-                    if editor.editing?.isRecurring == true, !editor.asksAboutTheSeries,
-                        editor.editing?.occurrence.isEmpty == true
-                    {
-                        Text(L10n.event_series_note())
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                // Attendees: shown so an edit is not made blind to who is coming, and stated to be
-                // read-only rather than offered as a field that would quietly drop the change:
-                // editing them means sending iTIP updates, which is its own feature.
-                if let attendees = editor.editing?.attendees, !attendees.isEmpty {
+                    // Reminder: shown, not yet editable. The repeat is a set of controls when the
+                    // core handed over a draft, and the sentence it already decided when it did not.
                     Section {
-                        EventAttendeesSection(attendees: attendees)
-                        Text(L10n.event_attendees_read_only())
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } header: {
-                        Text(L10n.event_attendees())
+                        LabeledContent(L10n.event_reminder(), value: reminderText(editor.editing?.reminderMinutes))
+
+                        if editor.canEditRepeat {
+                            EventRepeatSection(
+                                draft: $editor.repeatDraft,
+                                start: editor.start,
+                                opensOnOneOccurrence: !(editor.editing?.occurrence.isEmpty ?? true)
+                            )
+                        } else {
+                            LabeledContent(
+                                L10n.event_repeat(),
+                                value: recurrenceText(
+                                    editor.editing?.repeatSummary,
+                                    isRecurring: editor.editing?.isRecurring ?? false
+                                )
+                            )
+                            Text(L10n.event_repeat_locked())
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        // Only when the answer is settled. An editor opened on one occurrence asks
+                        // at Save which occurrences were meant, so stating the answer up here would
+                        // be telling the user something the next dialog contradicts.
+                        if editor.editing?.isRecurring == true, !editor.asksAboutTheSeries,
+                            editor.editing?.occurrence.isEmpty == true
+                        {
+                            Text(L10n.event_series_note())
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    EventInviteesSection(editor: $editor, suggestionsFor: suggestionsFor) { focused in
+                        if focused { keepInviteeFieldInView(proxy) }
                     }
                 }
             }
@@ -221,15 +215,26 @@ struct EventEditorView: View {
                 if let text = seriesWarningText(pending.warning) { Text(text) }
             }
         }
+        // The invitee field's suggestions float over the form rather than pushing it down; see
+        // RecipientSuggestionOverlay.swift.
+        .recipientSuggestionLayer()
         // See EventDetailView: a macOS sheet takes its size from its content, and a `Form` gives it
         // none. Taller than the detail sheet because this one is a full form.
         .frame(minWidth: 380, minHeight: 460)
+        #if os(macOS)
+            // Taller again with a meeting's people on it, which would otherwise start below the
+            // sheet's edge. macOS only: an iPhone or iPad sheet is sized by the system.
+            .frame(minHeight: hasPeople ? 640 : nil)
+        #endif
     }
 
     /// Save, straight through on a create, and on an edit of something that can only mean the
     /// whole series. An occurrence of a series is asked about first: which occurrences, and then,
     /// if the answer was all of them, what that costs.
     private func save() {
+        // An address typed but not added is meant to be on the list; one that cannot be invited
+        // stops the save, with the field saying why.
+        guard editor.takeTypedInvitee() else { return }
         guard editor.isEditing else {
             onCreate(editor.createArgs())
             return
@@ -256,6 +261,25 @@ struct EventEditorView: View {
         DispatchQueue.main.async {
             confirmingSave = PendingSeriesSave(args: args, warning: warning)
         }
+    }
+
+    /// Brings the invitee field back into view once the keyboard has settled.
+    ///
+    /// On iPhone and iPad, focusing a field with the email keyboard and autocorrection off (the
+    /// recipient field's) scrolls this form to its top, which leaves a field at the bottom under
+    /// the keyboard. Either setting alone does not, and neither is wrong for an address, so the
+    /// field is scrolled back rather than configured differently. Nothing to do on a Mac.
+    private func keepInviteeFieldInView(_ proxy: ScrollViewProxy) {
+        #if os(iOS)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                withAnimation { proxy.scrollTo(EventInviteesSection.fieldID, anchor: .bottom) }
+            }
+        #endif
+    }
+
+    /// Whether the form ends in a list of people, or the field to add them.
+    private var hasPeople: Bool {
+        editor.canInvite || !(editor.editing?.attendees.isEmpty ?? true)
     }
 
     private var calendarRow: some View {
@@ -301,7 +325,7 @@ struct CalendarPickerView: View {
                     Section(group.rows.first?.accountAddress ?? group.account) {
                         ForEach(group.rows, id: \.id) { calendar in
                             Button {
-                                onPick(CalendarChoice(account: calendar.account, id: calendar.id, name: calendar.name))
+                                onPick(calendar.choice)
                             } label: {
                                 HStack(spacing: 12) {
                                     Circle()

@@ -16,6 +16,8 @@
 #   scripts/dev/control.sh iphone probe <x> <y>       # the element under a point; reads the nav bar,
 #                                                     #   which ui-dump cannot enumerate (see below)
 #   scripts/dev/control.sh iphone tap <x> <y> | text "<s>"    # all six need idb (https://fbidb.io)
+#   scripts/dev/control.sh iphone hardware-keyboard off   # keep the on-screen keyboard up; see
+#                                                     #   scripts/dev/sim-keyboard.swift
 #   scripts/dev/control.sh macos tap <x> <y> | text "<s>" | key return|escape|...
 #   scripts/dev/control.sh macos drag <x1> <y1> <x2> <y2> [hold-ms]
 #                                                     #   a REAL mouse drag (down, dragged*, up),
@@ -87,7 +89,7 @@ case "$platform" in
     # renders perfectly while VoiceOver can no longer reach the buttons inside it.
     #
     # `describe-all` frames and `idb ui tap` are both in POINTS, so `find` composes straight into
-    # `tap` with no scaling and no Simulator-window arithmetic; which is what `press` does in one
+    # `tap` with no scaling and no Device Hub window arithmetic; which is what `press` does in one
     # call, since idb has no AXPress equivalent to invoke an element directly.
     #
     # Every call carries --udid and (re)starts the companion via lib.sh's idb_sim_udid; see there
@@ -100,6 +102,15 @@ case "$platform" in
     # (`probe` finds them by pixel, and idb stops the same way in Apple's own Settings app), so a
     # toolbar item missing from a dump is NOT a finding about the app. For the top bar use
     # `probe <x> <y>` to identify a control, then `tap` it; or a MAILCAL_* launch hook.
+    # The simulated hardware keyboard, which needs no idb (scripts/dev/sim-keyboard.swift). While it
+    # is on, one typed key hides the on-screen keyboard for good, so keep it off for anything that
+    # depends on the keyboard being there.
+    if [[ "$action" == hardware-keyboard ]]; then
+      [[ $# -ge 1 && ( "$1" == on || "$1" == off ) ]] || die "hardware-keyboard <on|off>"
+      udid="$(booted_sim_udid "$platform")" ||
+        die "no booted $platform simulator: boot one first: scripts/dev/boot.sh $platform"
+      exec xcrun swift "$REPO_ROOT/scripts/dev/sim-keyboard.swift" "$udid" "$1"
+    fi
     if ! command -v idb >/dev/null 2>&1; then
       cat >&2 <<EOF
 No stable input CLI is wired for the $platform simulator without idb. Prefer the deterministic
