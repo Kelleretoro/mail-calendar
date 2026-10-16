@@ -12,8 +12,8 @@ impl AccountRegistry {
     /// # Errors
     ///
     /// Returns [`MailcalError::Config`] for an unknown account, one that signs in through its
-    /// provider, an edit the account cannot take, and one that would make it the same account as
-    /// another already set up.
+    /// provider, or an edit the account cannot take, and [`MailcalError::AlreadySetUp`] for one
+    /// that would make it the same account as another already set up.
     pub(crate) fn edited_endpoints(
         &self,
         id: &str,
@@ -37,17 +37,14 @@ impl AccountRegistry {
         let edited = config
             .with_endpoints(edit)
             .map_err(|err| refused(err.to_string()))?;
-        // Another account keyed by the id these servers would derive, or whose own servers derive
-        // it (its id pinned before an edit of its own), is the same mailbox set up twice.
-        let duplicate = edited.config.derived_account_id().is_ok_and(|derived| {
-            entries.iter().any(|(other, entry)| {
-                other != id
-                    && (other == derived.as_str()
-                        || entry.derived_account_id().as_ref() == Some(&derived))
-            })
-        });
-        if duplicate {
-            return Err(refused("that account is already set up".to_owned()));
+        // Another account that is the mailbox these servers would derive is it set up twice.
+        let duplicate = edited
+            .config
+            .derived_account_id()
+            .ok()
+            .and_then(|derived| super::set_up::set_up_as(&entries, &[&derived], Some(id)));
+        if let Some(account_id) = duplicate {
+            return Err(MailcalError::AlreadySetUp { account_id });
         }
         let config_toml = edited
             .config
