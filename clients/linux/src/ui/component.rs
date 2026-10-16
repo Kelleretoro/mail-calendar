@@ -204,6 +204,7 @@ impl AppModel {
             pending_navigation: None,
             pending_mailto: None,
             pending_share: None,
+            notification_wait: None,
             draft_check: None,
             draft_check_seq: 0,
             discard_prompt: None,

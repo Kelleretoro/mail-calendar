@@ -177,6 +177,15 @@ that same file.
   goes through [`host_runtime`](../clients/linux/src/host_runtime.rs), which owns the one runtime
   and never drops it; `cargo xtask check-portal-runtime` refuses a second one anywhere else in
   the client.
+- **On Linux, a notification action that does not start with `app.` cannot start the app.** The
+  notification portal delivers an `app.` action by calling `ActivateAction` on the application's
+  bus name, which D-Bus answers by starting the app from its service file when it is not running.
+  Any other name is the portal's `ActionInvoked` **signal**, which reaches only a process subscribed
+  to it, so a click on a notification whose app has quit does nothing at all; and on GNOME the
+  shell does not emit that signal for an `app.` action either, so the two delivery paths never
+  overlap. Both look the same while the app is running, which is the only state a hand check
+  usually tries. The client's actions are in
+  [`ui/notification_click.rs`](../clients/linux/src/ui/notification_click.rs).
 
   **The tell is that it works exactly once.** The first portal call of the process succeeds, so a
   manual check passes and a screenshot proves nothing; only the second one hangs. Bound a portal
@@ -257,14 +266,33 @@ that same file.
   a machine with no matching `Microsoft.WindowsAppRuntime.2`). The log line is
   `notifications: could not register`, and a registration that succeeded reports the system's own
   answer beside it.
+- **An unregistered notification platform does not fail a click, it kills the process.** A launch
+  that *is* a click has to build an `AppNotificationActivatedEventArgs` inside
+  `AppInstance.GetCurrent().GetActivatedEventArgs()`, and the runtime cannot do that unless
+  `AppNotificationManager.Register()` has already run in this process. Unregistered, it does not
+  throw: it **fails fast** (`0xc0000409`, faulting module `Microsoft.WindowsAppRuntime.dll`), and
+  it does so before `Log.Init` has given anything somewhere to write. The app therefore vanishes on
+  the one launch the whole feature exists for, leaving an empty log, a Windows Error Reporting
+  entry and a spinner that blinks once, while every other launch is perfectly healthy. So
+  `Program.Main` registers **above** the line that reads the activation, and what a click *does* is
+  installed afterwards, from the window
+  ([`Services/NewMailNotifier.cs`](../clients/windows/Mailcal/Services/NewMailNotifier.cs)).
+  A host whose notification setting reads `Unsupported` fails the same way **with** the
+  registration in place: `Register()` succeeds, and the activation still cannot be built. The
+  GitHub Windows runner (Windows Server 2025) is such a host, and the app logs
+  `notifications: registered, system setting Unsupported` there. Nothing is posted on one, so no
+  click can start the app, but a test that fakes the launch will find the failfast and blame the
+  ordering.
 - **Registering for notifications on the UI thread pumps it, and work already queued runs
   early.** `Register()` is a COM call, and a COM call on an STA thread dispatches waiting messages
   while it waits. Called from `OnLaunched`, that lets the first account's connect continuation run
   before the window's content has a `XamlRoot`, and every prompt that opens on one dies with
   "This element does not have a XamlRoot" (the default-mail-app offer is the one that found it).
-  Nothing about the failure names notifications. Queue it at
-  `DispatcherQueuePriority.Low` instead, which runs once the window has laid out. The same caution
-  applies to any COM or WinRT call placed between constructing a window and activating it.
+  Nothing about the failure names notifications. The registration itself is out of reach of this
+  now, because the trap above moved it into `Program.Main`, which runs before `Application.Start`
+  and so has nothing queued to pump. The caution stands for any other COM or WinRT call placed
+  between constructing a window and activating it; queue one at `DispatcherQueuePriority.Low`,
+  which runs once the window has laid out.
 - **An unpackaged app must hand its notifications a display name.** `Register()` takes an overload
   with a display name and an icon URI; the parameterless one leaves an unpackaged registration with
   neither, since there is no manifest to read them from, and the shell then heads the app's mail

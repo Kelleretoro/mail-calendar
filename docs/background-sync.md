@@ -78,6 +78,32 @@ pass exists precisely to report mail that arrived while nobody was looking.
   requirement: because the mark advances past reported mail, a per-account notification would be
   **replaced** by the next pass's, silently losing an earlier still-unseen message. The app-icon
   badge (iOS) carries the whole pass's total, not one account's.
+- **Clicking one opens the message it names.** The notification carries the
+  `(account, message key)` pair the core keys mail on, because a click may also **start** the app,
+  and then nothing the process remembers is left to look the message up in: macOS and iOS put it in
+  `userInfo`, Android in the launch intent's extras, Windows in the toast's arguments, Linux in the
+  portal's default-action target. A **summary** names no message and so opens the app alone. A
+  click takes the app to **mail** before it opens anything, since the reading pane lives there and
+  one arriving over the calendar would otherwise open the message behind it. The three-pane clients
+  then resolve it against the list on screen first, so a message in view opens where it is without
+  moving the mailbox off the folder the person left it on; only a message the list
+  does not hold moves the mailbox to that message's account, and then for exactly **one** snapshot,
+  after which the click is dropped rather than dragging the view back on every later snapshot.
+  Android opens the named message straight away instead, because its reading screen replaces the
+  list rather than sitting beside it, so there is no place in the list to keep; until the list has
+  the row, the header takes the subject and the sender from the reading snapshot, which carries
+  both.
+- **A click on Linux is the application's own action.** The portal delivers an action named
+  `app.<name>` by calling the application on its bus name (`ActivateAction`), and any other action
+  only as a signal, which nothing receives once the app has quit. So the notification carries
+  `app.open-message`, and the Flatpak ships a D-Bus service file that starts the app for that call
+  (`--gapplication-service`). The desktop entry stays without `DBusActivatable`, so a launcher, a
+  mail link and an "Open With" still arrive on the command line.
+- **A message's notification is named by its account and its key together.** A provider key is
+  unique within its account and never across two, and a second notification under one name
+  replaces the first: two IMAP accounts on the same server software hand out the same keys. The
+  same holds for whatever a platform derives from it, such as Android's tap intent, whose extras
+  take no part in telling two intents apart.
 - **First run seeds, never floods.** An account with no mark yet is seeded to its newest existing
   Inbox message (or "now" over an empty inbox) and reports **nothing**: enabling the feature never
   notifies the whole existing inbox.
@@ -112,11 +138,11 @@ pass exists precisely to report mail that arrived while nobody was looking.
 | Core call | `collect_cached_new_mail` after the live runtime publishes `MailboxList` | `collect_cached_new_mail` after the live runtime publishes `MailboxList` | `collect_cached_new_mail` after the live runtime publishes `MailboxList` | `run_background_sync`: **reuses the live core** while the process is alive (weak `MailcalApplication.liveCore`), else a headless core built for the run | `run_background_sync`: **reuses the live core** while the app is resident (weak `LiveCore.shared`), else a headless core built for the run |
 | Budget | n/a (no network pass) | n/a (no network pass) | n/a (no network pass) | `120 s` (worker), well under the ~10-min cap | `25 s`, under iOS's ~30 s grant |
 | Skips when foregrounded | n/a (desktop live runtime) | n/a (desktop live runtime) | n/a (desktop live runtime) | Yes: defers to the live runtime (`MailcalApplication.isForeground`) | Naturally (iOS won't run it while active) |
-| Notifications | ✅ `UNUserNotificationCenter`, one per message by stable key (`identifier`), grouped per account (`threadIdentifier`); a summary covers previews beyond the cap; a click **opens the message** | ✅ `AppNotificationManager` (Windows App SDK), one per message by stable key (`Tag`), grouped per account (`Group`); a summary covers previews beyond the cap | ✅ desktop portal (`ashpd`), one per message by stable key; a summary covers previews beyond the cap | `NotificationCompat` "New mail" channel, one **per message** (grouped per account + summary), `POST_NOTIFICATIONS` | ✅ `UNUserNotificationCenter`, one **per message** (grouped per account via `threadIdentifier`), `requestAuthorization`; a summary covers previews beyond the cap; a tap **opens the message** |
+| Notifications | ✅ `UNUserNotificationCenter`, one per message by stable key (`identifier`), grouped per account (`threadIdentifier`); a summary covers previews beyond the cap; a click **opens the message** | ✅ `AppNotificationManager` (Windows App SDK), one per message by stable key (`Tag`), grouped per account (`Group`); a summary covers previews beyond the cap; a click **opens the message** | ✅ desktop portal (`ashpd`), one per message by stable key; a summary covers previews beyond the cap; a click **opens the message** | `NotificationCompat` "New mail" channel, one **per message** (grouped per account + summary), `POST_NOTIFICATIONS`; a tap **opens the message** | ✅ `UNUserNotificationCenter`, one **per message** (grouped per account via `threadIdentifier`), `requestAuthorization`; a summary covers previews beyond the cap; a tap **opens the message** |
 | Content | sender · subject · snippet, as the notification's title, subtitle and body | sender · subject · snippet, as the toast's three text elements | sender · subject and snippet sharing the portal's one body, on one line | sender · subject collapsed, the snippet on the expanded `BigTextStyle` | sender · account subtitle · subject and snippet sharing the body |
 | User toggle | Settings → Notifications (`NotificationPrefs`, UserDefaults) | Settings → Notifications (`NotificationPrefs`, a one-line file beside the language and log-level choices) | Settings → Notifications (`HostPreferences`) | Settings → "New-mail notifications" (`NotificationPrefs`, SharedPreferences) | Settings → "New-mail notifications" (`NotificationPrefs`, UserDefaults) |
 | Keeping its schedule | n/a (the process is always running) | n/a (the process is always running) | n/a (the process is always running) | Settings → "Background mail delivery" → **Allow** (`BatteryOptimization.kt`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`); shown only while not exempt. Without it Doze/OEM sleeping defer the pass by **hours** | Nothing to ask for: `BGTaskScheduler`'s cadence is entirely iOS's call |
-| Files | `MailcalModel.Notifications.swift`, `NewMailNotices.swift`, `MailNotifier.swift`, `Mailcal.NotificationOpen.swift`, `NotificationPrefs.swift` (live runtime: `crates/mailcal-bindings/src/background.rs`) | `MailboxModel.Notifications.cs`, `NewMailNotices.cs`, `NewMailNotifier.cs`, `NotificationPrefs.cs` | `ui/host_tasks.rs`, `ui/notifications.rs`, `preferences.rs` | `MailcalApplication.kt`, `MailSyncWorker.kt`, `MailNotifier.kt`, `NotificationPrefs.kt`, `BackgroundSupport.kt` | `BackgroundSync.swift`, `MailNotifier.swift`, `NewMailNotices.swift`, `Mailcal.NotificationOpen.swift`, `NotificationPrefs.swift` |
+| Files | `MailcalModel.Notifications.swift`, `NewMailNotices.swift`, `MailNotifier.swift`, `Mailcal.NotificationOpen.swift`, `NotificationPrefs.swift` (live runtime: `crates/mailcal-bindings/src/background.rs`) | `MailboxModel.Notifications.cs`, `MailboxModel.NotificationOpen.cs`, `NewMailNotices.cs`, `NewMailNotifier.cs`, `NotificationOpenInbox.cs`, `NotificationPrefs.cs` | `ui/host_tasks.rs`, `ui/notifications.rs`, `ui/notification_click.rs`, `ui/notification_open.rs`, `preferences.rs` | `MailcalApplication.kt`, `MailSyncWorker.kt`, `MailNotifier.kt`, `NotificationPrefs.kt`, `BackgroundSupport.kt` | `BackgroundSync.swift`, `MailNotifier.swift`, `NewMailNotices.swift`, `Mailcal.NotificationOpen.swift`, `NotificationPrefs.swift` |
 
 The **toggle only gates posting**: the pass still runs and advances the marks when off, so turning
 notifications off then on never floods with a backlog.
@@ -202,12 +228,14 @@ port:
 
 ## Known gaps / follow-ups
 
-- **Only Linux gates the notification itself.** All three desktops share the cache-only detection
-  seam and each posts through its own host, but what a gate can watch differs. Linux's
-  GNOME-runtime AT-SPI run posts on the shipped default first and only then turns the toggle off,
-  so the silence it asserts afterwards is measured against a notification that provably crossed
-  the portal. Asserted the other way round it was a gate that could not fail, and did not, for as
-  long as the portal call hung ([`client-traps.md`](client-traps.md)).
+- **Only Linux and Windows gate the notification itself.** All three desktops share the
+  cache-only detection seam and each posts through its own host, but what a gate can watch differs.
+  Linux's GNOME-runtime AT-SPI run posts on the shipped default first and only then turns the
+  toggle off, so the silence it asserts afterwards is measured against a notification that provably
+  crossed the portal. Asserted the other way round it was a gate that could not fail, and did not,
+  for as long as the portal call hung ([`client-traps.md`](client-traps.md)). Windows's
+  `NotificationClick` suite reads each notification it clicks from the shell's history, so a toast
+  that never reached the shell fails it, but it does not assert the silence with the toggle off.
 - **Nothing drives an Apple notification from a test, and the iOS half is not even unit-tested.**
   `NewMailNoticesTests` (MailcalKitTests) pins what a pass *says*, but that suite is plain
   `swift test` on the **host**, so it compiles and exercises the projection's **macOS** branch
@@ -219,22 +247,6 @@ port:
   as Windows's ([`debugging.md`](debugging.md)). Verified that way: a delivery into the watched
   Inbox raised one notification carrying the sender, the subject and the snippet, advanced the
   mark to it, and opened that message when clicked.
-- **Clicking a notification does not yet open the message on Windows and Linux**, which bring the
-  app forward and leave the reading pane where it was. macOS, iOS/iPadOS and Android open it. The
-  preview carries the stable message key the other two need, so this is wiring rather than a
-  missing contract, and the three that have it agree on the semantics: the message is named by the
-  `(account, message key)` pair the core keys it on, a **summary** names no message and so opens
-  the app alone, and a message the list does not hold yet is waited for over one account switch
-  rather than opened against whatever is on screen, then dropped rather than dragging the view
-  back to the mailbox on every later snapshot. Windows registers for activation either way
-  (`NewMailNotifier.Arm`), so the click already reaches the running app rather than doing nothing.
-- **Nothing drives the Windows notification from a test, and the ordinary dev build cannot raise
-  one.** `Mailcal.Tests` pins what a pass *says* (`NewMailNoticesTests`) and the UI suite pins the
-  Settings toggle, but no gate watches a notification reach the shell: `AppNotificationManager`
-  posts outside the app's UI-Automation tree, so `uitests` cannot see it. What holds the ordinary
-  dev loop open is that it is **framework-dependent**, like the Store build: registration is
-  unavailable to a self-contained one, which would make the feature silent by construction
-  ([`client-traps.md`](client-traps.md)). Verified by hand against the harness.
 - **iOS app-group store is deferred.** `BGAppRefreshTask` runs in the main app process, so it needs
   no app group. A future push Notification-Service-Extension will need one. That, and the app-group
   store move it forces, land with the paid push add-on and real signing, since an app-group
@@ -278,5 +290,29 @@ When you change background delivery or new-mail notifications:
 2. Keep the core contract identical across platforms: the same `run_background_sync` port, the
    high-water-mark dedupe + first-run seeding, the inbound-Inbox-only semantics, and the notification
    content policy.
-3. A new platform ships background delivery meeting this bar **before** it ships to users; any
-   shortfall goes under "Known gaps" with a follow-up, never left silent.
+3. A new platform ships background delivery meeting this bar **before** it ships to users; a
+   shortfall is closed, never recorded ("Work leaves no known gaps" in
+   [`AGENTS.md`](../AGENTS.md)).
+4. Keep what a **click** does under a gate on every platform that can run one. The click itself is
+   the shell's and no suite reaches it, so each gate delivers what the shell would:
+   - **Linux**: `scripts/dev/test-linux-ui.sh` calls the notification's own `app.` action on the
+     app's bus name, as GNOME Shell does, once with the app running and once with it quit, against
+     a service file standing in for the Flatpak's. It asserts the reading pane opened the message.
+   - **Android**: `NotificationOpenTest` takes the intent a tap would deliver from the posted
+     notification and reads it back through the activity's own decoder.
+   - **Windows**: `uitests/NotificationClick.Tests.ps1` reads the toast the app posted from the
+     shell's notification history and calls the app's notification activator with its arguments,
+     as the shell does on a click: over the calendar with the app running, over a composer, and
+     with the app closed, so that COM starts it. It asserts the reading pane opened the message, and
+     over a composer that what was written is in Drafts. It runs against the IMAP harness, which
+     CI cannot serve, so it is run by hand before a change to this path is pushed.
+   - **Windows**, the launch: a click that *starts* the app reads its activation before anything
+     else, and the Windows App SDK fails the process fast if the notification platform is not
+     registered first ([`client-traps.md`](client-traps.md)).
+     `cargo xtask check-notification-registration` pins the ordering in the source, in CI, and
+     `uitests/NotificationLaunch.Tests.ps1` runs the real binary through a notification activation.
+     ⚠️ That suite has to **close the app first**, since a running instance has already registered
+     the platform and a second process then reads its activation on a broken build as well as a
+     fixed one, and it has to wait out the full **7 to 8 seconds** the failfast takes. It skips on a
+     host whose system setting reads `Unsupported`, which includes the GitHub Windows runner, so
+     outside CI it is run by hand with the `NotificationClick` suite.

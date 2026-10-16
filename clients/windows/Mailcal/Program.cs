@@ -23,6 +23,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Win32;
 using Microsoft.Windows.AppLifecycle;
+using Microsoft.Windows.AppNotifications;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.DataTransfer.ShareTarget;
 
@@ -52,6 +53,13 @@ public static class Program
         // claim on it. Packaged/Store builds get it from Package.appxmanifest instead, skip there.
         RegisterProtocolForUnpackaged();
 
+        // Above the line below, and that is the whole reason it is here rather than in the window.
+        // Reading the activation arguments of a launch that IS a notification click means building
+        // an AppNotificationActivatedEventArgs, which the runtime fails fast on, taking the process
+        // with it, unless the notification platform is registered first (Services/NewMailNotifier.cs).
+        // What the click then DOES is installed later, once there is a window (App.OnLaunched).
+        NewMailNotifier.Arm();
+
         // A secondary activation (e.g. the OAuth redirect) is handed to the primary instance, which
         // then exits; only the primary starts the UI.
         var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
@@ -70,6 +78,9 @@ public static class Program
         // activation over and exit, and a session marker from it would read as a launch that never
         // happened.
         Log.Init(AppPaths.Root, AppIdentity.PackageVersion);
+        // Now that there is somewhere to write it: how the registration above went, which had no
+        // log to report into at the point it ran.
+        NewMailNotifier.LogRegistration();
         CrashLog.WatchProcess();
         if (_devSchemeNote is { } note)
         {
@@ -87,6 +98,11 @@ public static class Program
         // A cold start FROM a mail link. Held rather than acted on: there is no window yet, and no
         // account list to send from, so MainWindow drains it once the core is up (MainWindow.MailLink.cs).
         MailLinkInbox.Pending = MailLinkFrom(activation) ?? MailLink.FromArguments(Environment.GetCommandLineArgs());
+
+        // A cold start FROM a click on a new-mail notification. Held for the same reason as the
+        // link above: there is no window to open the message in and no core to find it with, so
+        // the shell drains it once both exist (Services/NotificationOpenInbox.cs).
+        NotificationOpenInbox.Pending = NotifiedMessageFrom(activation);
 
         // A cold start FROM a share. Read here rather than held as the activation is, because a
         // ShareOperation's access to what was shared ends when the operation reports completion,
@@ -139,6 +155,28 @@ public static class Program
                 calendarWindow.ShowCalendarSurface();
                 calendarWindow.BringToForeground();
             });
+            return;
+        }
+
+        // A click on a notification while the app is already running. It usually does NOT come
+        // this way: the notification COM server is registered in this process, so the shell
+        // activates it directly and NewMailNotifier's own handler answers. This covers the window
+        // where it is not registered yet, a click on a previous run's notification during startup,
+        // which launches a second process that is redirected here instead.
+        if (activation.Kind == ExtendedActivationKind.AppNotification)
+        {
+            // On the KIND, not on the message: a click on the overflow summary names none, and
+            // that click still has to bring the app forward.
+            var notified = NotifiedMessageFrom(activation);
+            if (App.Shell is MainWindow notifiedWindow)
+            {
+                notifiedWindow.DispatcherQueue.TryEnqueue(
+                    () => notifiedWindow.OpenNotification(notified));
+            }
+            else
+            {
+                NotificationOpenInbox.Pending = notified;
+            }
             return;
         }
 
@@ -206,6 +244,18 @@ public static class Program
             => MailLink.FromArgumentLine(launch.Arguments),
         _ => null,
     };
+
+    // The message a clicked new-mail notification named, or null when this activation is not one
+    // (or is a click on the overflow summary, which names no message: that one only has to bring
+    // the app forward, and being activated at all does exactly that).
+    //
+    // The arguments are the toast's own, put there by NewMailNotifier, so nothing a sender wrote
+    // reaches here: an account id and a provider key, both of which this app minted.
+    private static NotificationTarget? NotifiedMessageFrom(AppActivationArguments activation) =>
+        activation.Kind == ExtendedActivationKind.AppNotification
+            && activation.Data is AppNotificationActivatedEventArgs notification
+            ? NotificationTarget.From(notification.Arguments)
+            : null;
 
     // The share operation an activation carries, or null when it is not a share. Only a packaged
     // build is ever activated this way: `windows.shareTarget` is an MSIX manifest extension, so

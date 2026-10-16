@@ -866,6 +866,30 @@ that posted it is frontmost, which a debug build works around with
 the usage-statistics question has been answered, so a namespace where neither has happened never
 prompts and never posts ([`background-sync.md`](background-sync.md)).
 
+**The same loop shows one on Windows and Linux**, which raise theirs off the same live runtime. A
+real **click** is the shell's, and no suite reaches it; both platforms' suites deliver what the
+shell would instead ([`background-sync.md`](background-sync.md), Enforcement), so a click by hand
+is the check that the shell agrees. Aim a delivery at an account
+the mailbox is **not** showing as well as at one it is, because those are the two halves of the
+rule, opening in place against searching for the message after an account switch. On Windows the
+dev build must be the **framework-dependent** one `build-and-run.ps1` produces, or nothing is
+posted to click ([`client-traps.md`](client-traps.md)). On Linux a click reaches a dev run that is
+still running; one that has quit is started only if the session bus has a service file for the app
+id, which the Flatpak installs and a dev run does not (`click_notification_cold` in
+`test-linux-ui.sh` writes one).
+
+⚠️ **A click by hand that STARTS the Windows app cannot reach the harness account**, so that half
+is checked by hand against a real one. COM starts the app with the **activating** process's
+environment, and on a real click that process is the shell, whose environment was built when you
+logged in: it carries no `MAILCAL_DEV_ACCOUNT`, so the new process opens the **ordinary** store,
+where the message the notification names does not exist. Setting the variable for the user does
+not reach the shell either. What that looks like is the feature failing: the app comes up on the
+right account list and opens nothing, which is exactly the shape of the bug someone is looking for.
+`uitests/NotificationClick.Tests.ps1` is not affected, because it makes the activation itself and
+its environment is the harness's. The log tells the outcomes apart without a screenshot:
+`notification click: opening the message it named`, then either silence, meaning it opened, or
+`the message it named is not in the list, nothing opened`.
+
 ## 6. Physical iOS device: background sync + notifications
 
 Background delivery **cannot be tested on a simulator**: `BGTaskScheduler` never runs there and
