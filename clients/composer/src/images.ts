@@ -28,7 +28,7 @@ import {
 /// file's size in memory on the way out. Well above any screenshot, well below what a mail server
 /// would accept. A file over it is dropped rather than truncated; see `docs/composer-security.md`
 /// under "Known gaps".
-const MAX_CAPTURED_BYTES = 20 * 1024 * 1024;
+export const MAX_CAPTURED_BYTES = 20 * 1024 * 1024;
 
 /// A picture ready to go into the document: its bytes as a `data:` URI, plus the metadata the
 /// outgoing MIME part needs.
@@ -50,6 +50,13 @@ const SHOWABLE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 /// Whether `mediaType` names one of the formats above, parameters and casing aside.
 export function isShowableImage(mediaType: string): boolean {
   return SHOWABLE_TYPES.includes(mediaType.trim().toLowerCase().split(";")[0] ?? "");
+}
+
+/// Whether `url` is a `data:` URI of a showable format, base64 and with no parameters: the one shape
+/// a picture may enter the body in, and the prefix the core checks again on submit
+/// (`mailcal_composer::validate`), so a picture let in here is never one that fails the send.
+export function isShowableDataUrl(url: string): boolean {
+  return /^data:image\/(png|jpeg|gif|webp);base64,/.test(url);
 }
 
 /// The image files a paste or a drop carried, in the order the platform listed them.
@@ -113,7 +120,7 @@ export function insertCapturedImage(
   // The same check the core repeats on submit: a `data:text/html` here would be an executable
   // document, and only a picture of a showable format may end up behind the `cid:` an `<img>`
   // points at. An SVG fails it too, which is why the test is the closed list and not `image/`.
-  if (!url.startsWith("data:") || !isShowableImage(mediaTypeOf(url))) return false;
+  if (!isShowableDataUrl(url)) return false;
 
   const id = attachments.addCapturedImage({
     data_url: url,

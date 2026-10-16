@@ -271,6 +271,24 @@ describe("pasted markup that is not kept", () => {
   });
 });
 
+describe("after the markup is inserted", () => {
+  test("a paragraph holding nothing at all is no line, and a blank line the user made is one", () => {
+    // Chromium's insertHTML leaves an empty <p></p> after a list or a table followed by a
+    // paragraph. It takes no height on screen, so it is not sent as a blank line; it stays in the
+    // page, where removing it would happen outside the undo history.
+    const { editor } = harness("<ul><li>x</li></ul><p></p><p>b</p><p><br></p><p>c</p><p>&nbsp;</p>");
+    // The shape Chromium leaves in WebView2: not childless, but holding one empty text node.
+    const hollow = editor.ownerDocument.createElement("p");
+    hollow.appendChild(editor.ownerDocument.createTextNode(""));
+    editor.insertBefore(hollow, editor.querySelector("p:nth-of-type(3)"));
+    const lines = documentBlocks(editor).map((block) =>
+      "Paragraph" in block ? text(block.Paragraph.content) : "list",
+    );
+    expect(lines).toEqual(["list", "b", "", "c", " "]);
+    expect(editor.querySelectorAll("p").length).toBe(6);
+  });
+});
+
 describe("pasted structure", () => {
   test("one paragraph comes back as its runs, to join the sentence at the caret", () => {
     const { editor } = harness("");
@@ -319,6 +337,54 @@ describe("pasted structure", () => {
     expect(rows).toEqual([
       ["Item", "Unit", "Price"],
       ["Total", "", "5"],
+    ]);
+  });
+
+  test("a cell merged across rows keeps the cells of the rows below it in place", () => {
+    const [block] = pasted(
+      "<table><tr><th>Day</th><th>Time</th><th>Room</th></tr>" +
+        '<tr><td rowspan="2">Monday</td><td>09:00</td><td>A</td></tr>' +
+        "<tr><td>14:00</td><td>B</td></tr>" +
+        '<tr><td>Tuesday</td><td colspan="2" rowspan="2">all day</td></tr>' +
+        "<tr><td>Wednesday</td></tr></table>",
+    );
+    if (!block || !("Table" in block)) throw new Error("expected a table");
+    const rows = block.Table.rows.map((row) => row.cells.map((cell) => text(cell.content)));
+    expect(rows).toEqual([
+      ["Day", "Time", "Room"],
+      ["Monday", "09:00", "A"],
+      ["", "14:00", "B"],
+      ["Tuesday", "all day", ""],
+      ["Wednesday", "", ""],
+    ]);
+  });
+
+  test("a cell merged down across a hidden row still reaches the rows it covers", () => {
+    // Excel writes a hidden row as `display:none`; the merge counts it all the same.
+    const [block] = pasted(
+      '<table><tr><td rowspan="3">A</td><td>B</td></tr>' +
+        "<tr style='display:none'><td>hidden</td></tr>" +
+        "<tr><td>C</td></tr><tr><td>D</td><td>E</td></tr></table>",
+    );
+    if (!block || !("Table" in block)) throw new Error("expected a table");
+    const rows = block.Table.rows.map((row) => row.cells.map((cell) => text(cell.content)));
+    expect(rows).toEqual([
+      ["A", "B"],
+      ["", "C"],
+      ["D", "E"],
+    ]);
+  });
+
+  test("a merge ends with its section, as in HTML", () => {
+    const [block] = pasted(
+      '<table><thead><tr><td rowspan="5">Head</td><td>H</td></tr></thead>' +
+        "<tbody><tr><td>A</td><td>B</td></tr></tbody></table>",
+    );
+    if (!block || !("Table" in block)) throw new Error("expected a table");
+    const rows = block.Table.rows.map((row) => row.cells.map((cell) => text(cell.content)));
+    expect(rows).toEqual([
+      ["Head", "H"],
+      ["A", "B"],
     ]);
   });
 

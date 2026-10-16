@@ -65,7 +65,7 @@ const revision = installRevisionCounter(editor);
 // drop the image wherever the selection had moved to by the time the bytes arrived.
 editor.addEventListener("paste", (event) => {
   event.preventDefault();
-  const content = pasteContent(doc, event.clipboardData, caretHoldsInlineOnly());
+  const content = pasteContent(doc, event.clipboardData, caretHoldsInlineOnly(), attachments);
   if ("images" in content) {
     void insertImageFiles(editor, attachments, content.images, saveSelection(editor));
     return;
@@ -187,11 +187,15 @@ window.addComposerInlineImage = (meta) => attachments.addInlineImage(editor, met
 /// supplies the bytes because only it can resolve a dropped file to something readable.
 window.insertComposerImage = (image) =>
   insertCapturedImage(editor, attachments, parsed<CapturedImage>(image));
-/// Pastes formatted text the HOST read off the clipboard, answering whether any went in. Only a host
-/// whose WebView hides the clipboard's pictures from the page calls it: it holds the picture back
-/// until this says the HTML beside it carried nothing (`pasteContent`).
+/// Pastes formatted text the HOST read off the clipboard, answering whether any went in. A host calls
+/// it where its WebView will not hand the page the clipboard as it is: Linux, whose WebView hides the
+/// pictures and holds one back until this says the HTML beside it carried nothing (`pasteContent`),
+/// and iPhone and iPad, whose WebView rewrites another app's HTML and loses Word's lists.
 window.pasteComposerHtml = (html) => {
-  const markup = pastedHtml(doc, typeof html === "string" ? html : "", caretHoldsInlineOnly());
+  // A paste into the link panel's fields is the field's own: answering false hands it back to the
+  // host, which runs WebKit's paste there.
+  if (!rangeWithin(editor)) return false;
+  const markup = pastedHtml(doc, typeof html === "string" ? html : "", caretHoldsInlineOnly(), attachments);
   return markup !== null && insertHtml(markup);
 };
 window.setComposerQuote = (quote) => setComposerQuote(editor, parsed<QuoteSeed>(quote));
