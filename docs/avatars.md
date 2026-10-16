@@ -123,6 +123,16 @@ per photo: a publish per face would signal every client dozens of times for a si
 provider about the same strangers forever. It is given up when contacts sync, because that
 replaces the index the answer was derived from.
 
+**A photo already drawn stays drawn.** Every list the core publishes reads its faces from that
+map, the quick re-projection a local change makes as well as the full rebuild; one that skipped it
+turns the whole list back to monograms and then to the same photos a moment later. A contacts sync
+re-asks about every face, which is how a photo changed on the server arrives, and until the answer
+is in the row keeps the photo it had. The answer replaces it, with a new photo or with none; a
+lookup that could not be asked (no connected provider, a failed read or fetch) is no answer, and
+the photo stays. Answers come from the index they were asked against, so a pass that began before
+the sync records none of what it found, and a pass turned away because one was running is run by
+that one when it finishes.
+
 **Opening something never regresses to the monogram.** A reading header and a contact detail are
 each built one at a time rather than as a list, so each must read the same resolved map instead
 of projecting a fresh avatar: otherwise the list draws a photograph and tapping it draws

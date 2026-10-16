@@ -398,3 +398,38 @@ async fn a_streamed_pass_reprojects_the_list_once_per_chunk_not_once_per_message
         "every downloaded message still reaches the list"
     );
 }
+
+/// A live commit draws each sender's photo, as the authoritative rebuild does, so a local change
+/// such as a saved draft does not turn the list's faces to monograms until that rebuild lands.
+#[tokio::test]
+async fn a_live_commit_keeps_the_senders_photos() {
+    let surfaces = Arc::new(Mutex::new(Vec::new()));
+    let mut from_ada = message("m1", "a", "From Ada");
+    from_ada.envelope.from = vec![engine_core::mail::EmailAddress::new("ada@example.test")];
+    let app = app(
+        vec![account(
+            "acct-1",
+            FakeProvider::with(vec![from_ada.clone()]),
+        )],
+        &surfaces,
+    );
+    app.avatar_photos.lock().unwrap().insert(
+        "ada@example.test".to_owned(),
+        crate::avatars::PhotoState::File("/ada.png".to_owned()),
+    );
+    app.dispatch(Intent::RefreshMail).await;
+
+    let one = AccountId::try_from("acct-1").unwrap();
+    from_ada.envelope.subject = Some("From Ada, edited".to_owned());
+    app.apply_live_mail_delta(&one, &[from_ada], &[], 0);
+
+    let rows = app.mailbox_list().rows;
+    let Some(mailcal_viewmodel::view::SnapshotRow::Flat(row)) = rows.first() else {
+        panic!("one flat row: {rows:?}");
+    };
+    assert_eq!(
+        row.subject, "From Ada, edited",
+        "the live commit is the one on screen"
+    );
+    assert_eq!(row.avatar.image_path.as_deref(), Some("/ada.png"));
+}
