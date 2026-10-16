@@ -51,19 +51,6 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# The first available iPhone simulator, newest name last so a runner picks the newest it was given.
-# By family rather than by name: this has to work on a GitHub runner, whose installed set is
-# whatever that image shipped with, and a hardcoded model is a gate that stops running the day the
-# image moves.
-first_iphone_sim() {
-  local uuid name state pick=""
-  while IFS=$'\t' read -r uuid name state; do
-    [[ "$name" == *iPhone* ]] && pick="$uuid"
-  done < <(list_available_simulators)
-  [[ -n "$pick" ]] || return 1
-  printf '%s\n' "$pick"
-}
-
 is_macos || die "the Apple UI suite needs macOS (Xcode + a simulator or a connected device)"
 
 if [[ "$ON_DEVICE" -eq 1 ]]; then
@@ -135,13 +122,29 @@ info "building $TARGET"
 xcodebuild build-for-testing "${ARGS[@]}"
 
 if [[ "$ON_DEVICE" -eq 0 ]]; then
+  # The keyboard switch below, compiled before the boot rather than by `xcrun swift` after it,
+  # when the new device's daemons hold a runner's three cores: there the step took 143s, against
+  # 3s to compile beforehand and 45s to run, which is the device finishing its boot. Kept in the
+  # build directory by the source's hash, so CI's cache of that directory carries it forward.
+  KEYBOARD_TOOL="$HERE/build/tools/sim-keyboard-$(shasum -a 256 "$ROOT/scripts/dev/sim-keyboard.swift" | cut -c1-16)"
+  if [[ ! -x "$KEYBOARD_TOOL" ]]; then
+    t0=$SECONDS
+    mkdir -p "$(dirname "$KEYBOARD_TOOL")"
+    xcrun swiftc -o "$KEYBOARD_TOOL" "$ROOT/scripts/dev/sim-keyboard.swift"
+    info "keyboard switch compiled in $((SECONDS - t0))s"
+  fi
+
   info "simulator: $UDID (booting it if it is not already)"
+  t0=$SECONDS
   xcrun simctl bootstatus "$UDID" -b >/dev/null
+  info "simulator ready after $((SECONDS - t0))s"
+  t0=$SECONDS
   # The on-screen keyboard up, as on a phone: a simulated hardware keyboard keeps it down, and a
   # simulator last driven by `idb ui text` or a Mac key press simulates one, so the suite would
   # pass over a button the keyboard covers on every real iPhone.
-  xcrun swift "$ROOT/scripts/dev/sim-keyboard.swift" "$UDID" off >/dev/null ||
+  "$KEYBOARD_TOOL" "$UDID" off >/dev/null ||
     echo "warning: could not switch the simulated hardware keyboard off; tests run as the simulator is" >&2
+  info "hardware keyboard off after $((SECONDS - t0))s"
 fi
 
 info "running $TARGET $([[ "${#ONLY[@]}" -gt 0 ]] && printf '%s ' "${ONLY[@]}" || printf '(every test)')"
