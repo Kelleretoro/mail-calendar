@@ -186,6 +186,54 @@
       z-index: 2;
       border-top: 1px solid var(--border);
       border-bottom: none;
+      /* One row that scrolls sideways. Wrapped, every control on a phone took three rows above the
+         keyboard and left the message two lines. */
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    /* Only while the message is being written (`syncWriting` in host.ts). */
+    body.native-chrome:not(.composer-writing) .toolbar {
+      display: none;
+    }
+
+    body.native-chrome .toolbar > * {
+      flex: none;
+    }
+
+    /* The groups are reordered below, so the hairlines between them would fall in the wrong places. */
+    body.native-chrome .toolbar .sep {
+      display: none;
+    }
+
+    /* What a message on a phone uses most comes first, before the row scrolls: the marks, lists and
+       links, then colour, then the layout controls, and the wide pickers last. */
+    body.native-chrome .toolbar > [data-command] { order: 1; }
+    body.native-chrome #bullet-list,
+    body.native-chrome #ordered-list { order: 2; }
+    body.native-chrome .toolbar > .menu:has(#link) { order: 3; }
+    body.native-chrome .toolbar > .menu:has(#text-colour),
+    body.native-chrome .toolbar > .menu:has(#highlight) { order: 4; }
+    body.native-chrome #outdent,
+    body.native-chrome #indent,
+    body.native-chrome .toolbar > .menu:has(#align) { order: 5; }
+    body.native-chrome .toolbar > .menu:has(#table),
+    body.native-chrome #rule { order: 6; }
+    body.native-chrome .toolbar > select { order: 7; }
+
+    /* A finger's target. The row has the height for it now it is one row. */
+    @media (pointer: coarse) {
+      body.native-chrome .toolbar > button,
+      body.native-chrome .toolbar > .menu > button,
+      body.native-chrome .toolbar > select {
+        min-height: 40px;
+      }
+
+      body.native-chrome .toolbar > button,
+      body.native-chrome .toolbar > .menu > button {
+        min-width: 40px;
+      }
     }
 
     body.native-chrome .editor {
@@ -198,8 +246,9 @@
          `100vh` and `100%` compute to `0px` with no warning. Do not "simplify" this back to
          `min-height: 100vh`; it silently does nothing and the body stops being tappable. */
       min-height: var(--composer-fill-height, 0px);
-      /* 16px sides to line up with the native header fields' inset. */
-      padding: var(--composer-top-inset, 14px) 16px var(--composer-bottom-inset, 56px);
+      /* 16px sides to line up with the native header fields' inset, and 12px between the header's last
+         line and the message's first, so the message does not read as part of the Subject field. */
+      padding: calc(var(--composer-top-inset, 14px) + 12px) 16px var(--composer-bottom-inset, 56px);
     }
 
     p {
@@ -388,11 +437,17 @@
       display: none;
     }
 
-    /* In native-chrome mode the toolbar is pinned to the bottom of the viewport, so a popover
-       below it would open off-screen behind the keyboard. */
+    /* In native-chrome mode the toolbar is pinned to the bottom of the viewport and scrolls sideways,
+       so a popover hung from its button would open behind the keyboard and be clipped by the row. It
+       is pinned to the viewport instead, just above the toolbar; `alignPopover` sets its left edge. */
+    body.native-chrome .menu {
+      position: static;
+    }
+
     body.native-chrome .popover {
+      position: fixed;
       top: auto;
-      bottom: calc(100% + 4px);
+      bottom: calc(var(--composer-bottom-inset, 56px) + 4px);
     }
 
     /* Keep a popover inside the viewport when its button sits near the right edge. */
@@ -912,6 +967,14 @@
 
   // src/typography.ts
   var LEGACY_SIZES = [10, 13, 16, 18, 24, 32, 48];
+  function nearestLegacyLevel(size) {
+    let best = 0;
+    for (let i = 1;i < LEGACY_SIZES.length; i++) {
+      if (Math.abs(LEGACY_SIZES[i] - size) < Math.abs(LEGACY_SIZES[best] - size))
+        best = i;
+    }
+    return String(best + 1);
+  }
   var KEYWORD_SIZES = {
     "xx-small": 9,
     "x-small": 10,
@@ -1898,6 +1961,11 @@
     exec(editor, command);
   }
   function applyFontSize(editor, size) {
+    const caret = rangeWithin(editor);
+    if (caret?.collapsed) {
+      sizeAtCaret(editor, caret, size);
+      return;
+    }
     exec(editor, "fontSize", "7");
     normalizeFontElements(editor, size);
     const range = rangeWithin(editor);
@@ -1907,6 +1975,31 @@
       if (!range || !rangeTouches(range, span))
         continue;
       stampSize(span, size);
+    }
+  }
+  function sizeAtCaret(editor, caret, size) {
+    const node = caret.startContainer;
+    const offset = caret.startOffset;
+    exec(editor, "fontSize", nearestLegacyLevel(size));
+    editor.addEventListener("beforeinput", () => {
+      const now = rangeWithin(editor);
+      if (!now?.collapsed || now.startContainer !== node || now.startOffset !== offset)
+        return;
+      editor.addEventListener("input", () => stampTypedSize(editor, size), { once: true });
+    }, { once: true });
+  }
+  function stampTypedSize(editor, size) {
+    const range = rangeWithin(editor);
+    for (let node = range?.startContainer ?? null;node && node !== editor; node = node.parentNode) {
+      if (node.nodeType !== 1)
+        continue;
+      const element = node;
+      if (element.dataset.size || element.closest(".allodia-quote, .allodia-signature"))
+        return;
+      if (element.tagName === "FONT" && element.hasAttribute("size") || element.style.fontSize) {
+        stampSize(element, size);
+        return;
+      }
     }
   }
   function applyFontFamily(editor, font) {
@@ -1986,7 +2079,7 @@
   }
 
   // src/host.ts
-  function installNativeChrome(editor, toolbar) {
+  function installNativeChrome(editor, toolbar, onStopWriting = () => {}) {
     const doc = editor.ownerDocument;
     const win = windowOf(editor);
     const setBottomInset = () => {
@@ -1995,10 +2088,28 @@
     const fillViewport = () => {
       doc.documentElement.style.setProperty("--composer-fill-height", `${doc.documentElement.clientHeight}px`);
     };
+    let writing = false;
+    const syncWriting = () => {
+      const active = doc.activeElement;
+      const now = doc.hasFocus() && (editor.contains(active) || toolbar.contains(active));
+      if (writing && !now)
+        onStopWriting();
+      writing = now;
+      doc.body.classList.toggle("composer-writing", writing);
+    };
     return {
       useNativeComposerChrome() {
         doc.documentElement.classList.add("native-chrome");
         doc.body.classList.add("native-chrome");
+        syncWriting();
+        doc.addEventListener("focusin", syncWriting);
+        doc.addEventListener("focusout", () => win.setTimeout(syncWriting, 0));
+        win.addEventListener("focus", syncWriting);
+        win.addEventListener("blur", syncWriting);
+        toolbar.addEventListener("change", (event) => {
+          if (event.target?.tagName === "SELECT")
+            editor.focus();
+        });
         setBottomInset();
         fillViewport();
         if (win.ResizeObserver)
@@ -4384,6 +4495,11 @@
       const button = popover.button.getBoundingClientRect();
       const panel = popover.panel.getBoundingClientRect();
       popover.panel.hidden = wasHidden;
+      if (windowOf(editor).getComputedStyle(popover.panel).position === "fixed") {
+        const furthest = Math.max(VIEWPORT_MARGIN, width - panel.width - VIEWPORT_MARGIN);
+        popover.panel.style.left = `${Math.min(Math.max(VIEWPORT_MARGIN, button.left), furthest)}px`;
+        return;
+      }
       if (width <= 0 || panel.width <= 0 || button.left + panel.width <= width)
         return;
       if (button.left + button.width - panel.width >= 0) {
@@ -4483,6 +4599,7 @@
     });
     return {
       openLink,
+      closePopovers: () => closeAll(),
       applyLabels(current) {
         editor.dataset.placeholder = current.placeholder;
         editor.setAttribute("aria-label", current.placeholder);
@@ -4619,7 +4736,7 @@
     editLinkThroughHost(editor, hostRequests);
     return true;
   });
-  var chrome = installNativeChrome(editor, toolbarRoot);
+  var chrome = installNativeChrome(editor, toolbarRoot, () => toolbar.closePopovers());
   installImageResize(editor);
   var revision = installRevisionCounter(editor);
   editor.addEventListener("paste", (event) => {

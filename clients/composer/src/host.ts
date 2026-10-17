@@ -1,7 +1,8 @@
 // Native-chrome mode: the single-scroll layout Android hosts the editor in.
 //
 // The native surface owns one scroll; the compose header sits in a native overlay above this
-// WebView and scrolls away as the message grows, and the toolbar pins just above the keyboard. So
+// WebView and scrolls away as the message grows, and the toolbar pins just above the keyboard, one
+// row that scrolls sideways, while the message is being written. So
 // the *page* scrolls (not an inner editor box), the toolbar is fixed to the viewport bottom, and the
 // editor reserves room for the native header (top) and the fixed toolbar (bottom) via insets the
 // host sets. A host that never calls `useNativeComposerChrome` keeps the desktop flex layout.
@@ -13,7 +14,12 @@ export interface NativeChrome {
   setComposerTopInset(cssPx: unknown): void;
 }
 
-export function installNativeChrome(editor: HTMLElement, toolbar: HTMLElement): NativeChrome {
+/// `onStopWriting` runs when the message stops being written, for the toolbar to close its panels.
+export function installNativeChrome(
+  editor: HTMLElement,
+  toolbar: HTMLElement,
+  onStopWriting: () => void = () => {},
+): NativeChrome {
   const doc = editor.ownerDocument;
   const win = windowOf(editor);
 
@@ -46,13 +52,42 @@ export function installNativeChrome(editor: HTMLElement, toolbar: HTMLElement): 
     );
   };
 
+  // The toolbar formats the message, so it is drawn while the message is being written and gone
+  // while an address field in the native header has the keyboard, where it would only take room
+  // from the field being typed in. "Being written" is the message or the toolbar holding focus in a
+  // page that has it: the native header taking focus blurs the page and leaves `activeElement` where
+  // it was, so `hasFocus` is what tells the two apart. A panel left open would come back with the
+  // toolbar, over a message the user has since moved on from, so it is closed as the toolbar goes.
+  let writing = false;
+  const syncWriting = () => {
+    const active = doc.activeElement;
+    const now = doc.hasFocus() && (editor.contains(active) || toolbar.contains(active));
+    if (writing && !now) onStopWriting();
+    writing = now;
+    doc.body.classList.toggle("composer-writing", writing);
+  };
+
   return {
     useNativeComposerChrome() {
       doc.documentElement.classList.add("native-chrome");
       doc.body.classList.add("native-chrome");
+      syncWriting();
+      doc.addEventListener("focusin", syncWriting);
+      // After the move, so `activeElement` already names where focus went.
+      doc.addEventListener("focusout", () => win.setTimeout(syncWriting, 0));
+      win.addEventListener("focus", syncWriting);
+      win.addEventListener("blur", syncWriting);
+      // A picked font, size or style goes back to the message, which is where the next keystroke
+      // belongs. Left on the `select`, focus would keep the toolbar up as "writing" with nothing to
+      // type into. Here rather than in the toolbar, because on a desktop a keyboard user changes a
+      // `select` with the arrow keys, and each arrow is a `change`.
+      toolbar.addEventListener("change", (event) => {
+        if ((event.target as Element | null)?.tagName === "SELECT") editor.focus();
+      });
       setBottomInset();
       fillViewport();
-      // The toolbar can wrap to a second row on a narrow screen; keep the inset in step.
+      // The toolbar comes and goes with focus; keep the inset in step, so the message's last line
+      // clears it while it is there and the page does not end in a blank band while it is not.
       if (win.ResizeObserver) new win.ResizeObserver(setBottomInset).observe(toolbar);
       // The keyboard opening/closing resizes the viewport; keep the fill in step with it.
       win.addEventListener("resize", fillViewport);
