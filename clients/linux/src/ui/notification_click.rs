@@ -8,13 +8,22 @@
 //! service file first when it is not. So the notification carries application actions, and these
 //! are they.
 //!
+//! A snap is the exception. The portal knows it by its desktop-file id (`<snap>_<app>`), which is
+//! no bus name, so the shell cannot call the application and signals every action instead. The
+//! snap listens for that signal ([`listen_in_snap`]), and a click after it has quit starts nothing.
+//!
 //! What the click then does to the mailbox is [`super::notification_open`]; posting is
 //! [`super::notifications`].
 
 use adw::prelude::*;
+use ashpd::{desktop::notification::NotificationProxy, zvariant::OwnedValue};
+use futures::StreamExt;
 use gtk::{gio, glib};
 
-use super::{AppInput, notifications::NotificationTarget};
+use super::{
+    AppInput,
+    notifications::{ID_PREFIX, NotificationTarget},
+};
 
 /// The action a message notification's click activates, named as the application exports it.
 const OPEN_MESSAGE: &str = "open-message";
@@ -59,28 +68,136 @@ pub(crate) fn install(application: &adw::Application, deliver: fn(AppInput)) {
     application.add_action(&open_app);
 }
 
-/// What a message notification's click means. A target that will not decode still names this
-/// app, so the click brings the window forward rather than doing nothing at all.
+/// Delivers the clicks the portal signals, while this process runs, when it runs as a snap.
+pub(crate) fn listen_in_snap(deliver: fn(AppInput)) {
+    if std::env::var_os("SNAP_INSTANCE_NAME").is_none() {
+        return;
+    }
+    // The portal connection is process-global and lives on the shared runtime
+    // ([`crate::host_runtime`]).
+    let Some(runtime) = crate::host_runtime::shared() else {
+        return;
+    };
+    runtime.spawn(async move {
+        if listen(deliver).await.is_err() {
+            log::warn!("could not listen for notification clicks");
+        }
+    });
+}
+
+async fn listen(deliver: fn(AppInput)) -> ashpd::Result<()> {
+    let proxy = NotificationProxy::new().await?;
+    let mut clicks = proxy.receive_action_invoked().await?;
+    while let Some(click) = clicks.next().await {
+        if let Some(input) = input_for_signal(click.id(), click.name(), click.parameter()) {
+            deliver(input);
+        }
+    }
+    log::warn!("stopped listening for notification clicks");
+    Ok(())
+}
+
+/// What a signalled click means, or `None` for a notification or an action this app never posts.
+/// The portal signals a click to every listener, whichever application posted it.
+fn input_for_signal(id: &str, action: &str, parameter: &[OwnedValue]) -> Option<AppInput> {
+    if !id.starts_with(ID_PREFIX) {
+        return None;
+    }
+    match action.strip_prefix("app.")? {
+        OPEN_MESSAGE => {
+            Some(input_for_pair(parameter.first().and_then(|target| {
+                Vec::<String>::try_from(target.try_clone().ok()?).ok()
+            })))
+        }
+        OPEN_APP => Some(AppInput::ShowFromNotification),
+        _ => None,
+    }
+}
+
+/// What a message notification's click means.
 fn input_for_message(parameter: Option<&glib::Variant>) -> AppInput {
-    parameter
-        .and_then(target_of)
+    input_for_pair(parameter.and_then(glib::Variant::get::<Vec<String>>))
+}
+
+/// The pair [`super::notifications`] sent as the action's target, read back. A target that will
+/// not decode still names this app, so the click brings the window forward rather than doing
+/// nothing at all.
+fn input_for_pair(pair: Option<Vec<String>>) -> AppInput {
+    pair.and_then(target_of)
         .map_or(AppInput::ShowFromNotification, |target| {
             AppInput::OpenNotifiedMessage(Box::new(target))
         })
 }
 
-/// The pair [`super::notifications`] sent as the action's target, read back.
-fn target_of(parameter: &glib::Variant) -> Option<NotificationTarget> {
-    let [account, key] = <[String; 2]>::try_from(parameter.get::<Vec<String>>()?).ok()?;
+fn target_of(pair: Vec<String>) -> Option<NotificationTarget> {
+    let [account, key] = <[String; 2]>::try_from(pair).ok()?;
     (!account.is_empty() && !key.is_empty()).then_some(NotificationTarget { account, key })
 }
 
 #[cfg(test)]
 mod tests {
+    use ashpd::zvariant::{OwnedValue, Value};
     use gtk::glib::{Variant, prelude::ToVariant};
 
-    use super::{AppInput, input_for_message, open_app_action, open_message_action};
+    use super::{
+        AppInput, input_for_message, input_for_signal, open_app_action, open_message_action,
+    };
     use crate::ui::notifications::NotificationTarget;
+
+    fn signalled(action: &str, parameter: Vec<Value<'static>>) -> Option<AppInput> {
+        signalled_on("mailcal-4:work:m1", action, parameter)
+    }
+
+    fn signalled_on(id: &str, action: &str, parameter: Vec<Value<'static>>) -> Option<AppInput> {
+        let parameter = parameter
+            .into_iter()
+            .map(|value| OwnedValue::try_from(value).expect("a value with no file descriptor"))
+            .collect::<Vec<_>>();
+        input_for_signal(id, action, &parameter)
+    }
+
+    #[test]
+    fn a_signalled_click_opens_the_message_its_notification_named() {
+        let carried = Value::from(vec!["work".to_owned(), "m1".to_owned()]);
+        let Some(AppInput::OpenNotifiedMessage(target)) =
+            signalled(&open_message_action(), vec![carried])
+        else {
+            panic!("a message notification's click opens its message");
+        };
+        assert_eq!(
+            *target,
+            NotificationTarget {
+                account: "work".to_owned(),
+                key: "m1".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_signalled_click_that_names_no_message_only_shows_the_app() {
+        assert!(matches!(
+            signalled(&open_app_action(), Vec::new()),
+            Some(AppInput::ShowFromNotification)
+        ));
+        assert!(matches!(
+            signalled(&open_message_action(), vec![Value::from("work")]),
+            Some(AppInput::ShowFromNotification)
+        ));
+    }
+
+    #[test]
+    fn a_signalled_action_this_app_never_posts_is_ignored() {
+        assert!(signalled("app.quit", Vec::new()).is_none());
+        assert!(signalled("open-message", Vec::new()).is_none());
+    }
+
+    #[test]
+    fn a_click_on_another_applications_notification_is_ignored() {
+        let carried = Value::from(vec!["work".to_owned(), "m1".to_owned()]);
+        assert!(
+            signalled_on("their-notification", &open_message_action(), vec![carried]).is_none()
+        );
+    }
 
     fn target(parameter: &Variant) -> Option<NotificationTarget> {
         match input_for_message(Some(parameter)) {
