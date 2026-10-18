@@ -15,30 +15,28 @@ internal static class Input
     /// <summary>
     /// Brings <paramref name="hwnd"/> to the front, unless it is there already: input goes to
     /// whatever is in front. Windows lets a process take the front only when it sent the last input,
-    /// so a refused request is followed by a keystroke and asked again. The key is 0xE8, which
-    /// Windows assigns to nothing, because it reaches whichever window is in front at the time.
+    /// so a refused request is followed by a keystroke and asked again, until it is granted. The key
+    /// is 0xE8, which Windows assigns to nothing, because it reaches whichever window is in front
+    /// at the time. Once is not always enough: a window the app has just opened can take the front
+    /// back between the keystroke and the request.
     /// </summary>
     internal static void BringToFront(long hwnd)
     {
         var target = (nint)hwnd;
-        if (GetForegroundWindow() == target)
-        {
-            return;
-        }
-        if (!SetForegroundWindow(target))
-        {
-            keybd_event(0xE8, 0, 0, 0);
-            keybd_event(0xE8, 0, KeyUp, 0);
-            SetForegroundWindow(target);
-        }
-        var deadline = DateTime.UtcNow.AddSeconds(2);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
         while (GetForegroundWindow() != target)
         {
             if (DateTime.UtcNow > deadline)
             {
                 throw new InvalidOperationException($"window {hwnd} would not come to the front");
             }
-            Thread.Sleep(20);
+            if (!SetForegroundWindow(target))
+            {
+                keybd_event(0xE8, 0, 0, 0);
+                keybd_event(0xE8, 0, KeyUp, 0);
+                SetForegroundWindow(target);
+            }
+            Thread.Sleep(100);
         }
     }
 
@@ -63,6 +61,53 @@ internal static class Input
         {
             Send(Mouse(down), Mouse(up));
         }
+    }
+
+    /// <summary>
+    /// Drags <paramref name="from"/> to a screen point and lets go there: the button pressed on the
+    /// element, the pointer carried across in steps, as a hand moves it, and a rest at the point
+    /// before the release, so whatever is under it has answered the drag before the drop arrives.
+    /// The moves are real input rather than cursor jumps, which is what the system's drag loop reads.
+    /// </summary>
+    internal static void Drag(Element from, int toX, int toY, int dwellMs = 800)
+    {
+        if (!from.Rendered)
+        {
+            throw new InvalidOperationException($"'{from.Name}' (#{from.Id}) is not drawn, so a drag cannot start on it");
+        }
+        BringToFront(from.Window);
+        var (x, y) = ((int)(from.X + from.Width / 2), (int)(from.Y + from.Height / 2));
+        MoveTo(x, y);
+        Send(Mouse(MouseLeftDown));
+        Thread.Sleep(100);
+        const int steps = 25;
+        for (var i = 1; i <= steps; i++)
+        {
+            MoveTo(x + ((toX - x) * i / steps), y + ((toY - y) * i / steps));
+            Thread.Sleep(20);
+        }
+        Thread.Sleep(dwellMs);
+        Send(Mouse(MouseLeftUp));
+    }
+
+    /// <summary>Moves the pointer to a screen point, in physical pixels, as a mouse moves it.</summary>
+    private static void MoveTo(int x, int y)
+    {
+        var (left, top) = (GetSystemMetrics(VirtualScreenLeft), GetSystemMetrics(VirtualScreenTop));
+        var (width, height) = (GetSystemMetrics(VirtualScreenWidth), GetSystemMetrics(VirtualScreenHeight));
+        Send(new NativeInput
+        {
+            Type = InputMouse,
+            Union = new InputUnion
+            {
+                Mouse = new MouseInput
+                {
+                    Dx = (int)((x - left) * 65535L / (width - 1)),
+                    Dy = (int)((y - top) * 65535L / (height - 1)),
+                    Flags = MouseMove | MouseAbsolute | MouseVirtualDesk,
+                },
+            },
+        });
     }
 
     /// <summary>Presses and releases one key, by its virtual-key code, in whatever has the keyboard.
@@ -126,6 +171,13 @@ internal static class Input
     private const uint MouseRightDown = 0x0008;
     private const uint MouseRightUp = 0x0010;
     private const uint MouseWheel = 0x0800;
+    private const uint MouseMove = 0x0001;
+    private const uint MouseAbsolute = 0x8000;
+    private const uint MouseVirtualDesk = 0x4000;
+    private const int VirtualScreenLeft = 76;
+    private const int VirtualScreenTop = 77;
+    private const int VirtualScreenWidth = 78;
+    private const int VirtualScreenHeight = 79;
     private const uint KeyUp = 0x0002;
     private const uint KeyUnicode = 0x0004;
     private static readonly nint PerMonitorAwareV2 = -4;
@@ -173,4 +225,5 @@ internal static class Input
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint hwnd);
     [DllImport("user32.dll")] private static extern uint MapVirtualKeyW(uint code, uint mapType);
     [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(nint context);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
 }

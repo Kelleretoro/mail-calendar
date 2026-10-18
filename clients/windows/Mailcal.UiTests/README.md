@@ -25,10 +25,11 @@ write followed. A failing case leaves a screenshot and the element tree the agen
 ## Launches
 
 The app reads its `MAILCAL_*` switches once, at startup, so a launch is a fixture in
-[`Suites/HarnessApp.cs`](Suites/HarnessApp.cs): one per account set (alice over JMAP, alice and bob
-together, alice over IMAP) shared by every suite in its collection, which puts back what each case
-leaves. A suite that sets an account up through the form gets a launch of its own on an emptied
-first-run store, because what a first run asks is asked once a store.
+[`Suites/HarnessApp.cs`](Suites/HarnessApp.cs): one per set of switches (which accounts over which
+transport, a pinned appearance, a server verdict faked in the core) shared by every suite in its
+collection, which puts back what each case leaves. A suite that sets an account up through the form
+gets a launch of its own on an emptied first-run store, because what a first run asks is asked once
+a store; so does one whose case quits the app, as a notification click with the app closed does.
 
 ## The agent
 
@@ -50,10 +51,16 @@ an obvious reimplementation finds nothing:
 - **A text box's value is not on its peer.** WinUI implements the value pattern of a `TextBox` and a
   `PasswordBox` inside the framework, so the agent reads and sets the box itself, which is what
   UI Automation's value pattern does to it.
+- **A text box's placeholder is a text under it.** The agent sees the box's template, so an empty
+  box with a placeholder holds one Text element and one with a header holds another; count against
+  a box known to have the one being asked about.
 - **A WebView2's content is not walked.** It is the browser's own tree, and searching across the
   composer's editor costs UI Automation seconds a call; nothing a suite looks up lives in it.
 - **A peer measures from its window's client area.** The agent reports physical screen pixels, the
   unit a press is aimed in.
+- **A peer can refuse its children.** The invitation card's Expander, while offscreen, answers
+  `E_OUTOFMEMORY` (raised as `OutOfMemoryException`) every time it is asked; the walk passes over
+  it, as UI Automation passes over a subtree it cannot read.
 
 ## Writing a case
 
@@ -68,6 +75,10 @@ an obvious reimplementation finds nothing:
 - **A dialog has not closed until its dimming layer has.** A ContentDialog's own popup goes the
   moment it is dismissed, but the layer behind it stays until the close completes, and the app
   opens no other dialog before then: `App.CloseDialogs` waits for both.
+- **A row far down the message list has not been built.** The list is virtualised, so a row
+  scrolled well out of view is in no tree at all: `App.RowTitled` scrolls down the list to find
+  it. And a case that leaves the calendar on screen leaves no list: `App.RowsList` puts the mail
+  back.
 - **A folder's list is not that folder's until its header names it.** The rows on screen in the
   meantime are the last folder's, and a press meant for the new list lands on one of them.
 - **A text box has the keyboard before it can take characters.** It reports focus before Windows'
@@ -79,7 +90,7 @@ an obvious reimplementation finds nothing:
   agree. Beneath the fold, a peer still answers but reports no size; scroll first.
 - **What the system draws is not in the agent's tree.** The print dialog, a classic Save As and a
   window's caption buttons are read through UI Automation ([`Driver/PrintDialogs.cs`](Driver/PrintDialogs.cs),
-  [`Driver/Desktop.cs`](Driver/Desktop.cs)). UI Automation files an owned window under its owner,
+  [`Driver/SaveDialogs.cs`](Driver/SaveDialogs.cs), [`Driver/Desktop.cs`](Driver/Desktop.cs)). UI Automation files an owned window under its owner,
   so a search of the desktop's children never meets a dialog the app's own window owns; the window
   list does.
 - **Real input only for a press that has to be a press**: a double-click, a click into the

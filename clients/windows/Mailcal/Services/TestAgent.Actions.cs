@@ -21,6 +21,7 @@ internal static partial class TestAgent
     private static void Detail(AutomationPeer peer, JsonObject described)
     {
         described["focused"] = peer.HasKeyboardFocus();
+        described["help"] = peer.GetHelpText();
         if (peer.GetPattern(PatternInterface.Value) is IValueProvider value)
         {
             described["value"] = value.Value;
@@ -123,13 +124,21 @@ internal static partial class TestAgent
         return new JsonObject { ["toggle"] = toggle.ToggleState.ToString() };
     }
 
-    /// <summary>Opens a combo box or a drop-down, whose items have no peers until it is open.</summary>
-    private static JsonObject Expand(JsonObject request)
+    /// <summary>Opens a combo box or a drop-down, whose items have no peers until it is open, or
+    /// with <paramref name="open"/> false closes it again.</summary>
+    private static JsonObject Expand(JsonObject request, bool open)
     {
         var peer = PeerOf(HandleIn(request));
         var expand = peer.GetPattern(PatternInterface.ExpandCollapse) as IExpandCollapseProvider
             ?? throw new AgentException($"'{peer.GetName()}' does not expand");
-        expand.Expand();
+        if (open)
+        {
+            expand.Expand();
+        }
+        else
+        {
+            expand.Collapse();
+        }
         return new JsonObject { ["ok"] = true };
     }
 
@@ -163,17 +172,19 @@ internal static partial class TestAgent
         return new JsonObject { ["elements"] = focused is null ? new JsonArray() : new JsonArray(Describe(focused)) };
     }
 
-    /// <summary>Scrolls the first vertically scrollable element at or under the given one to its end,
-    /// as a person scrolls a long form to the section at its foot.</summary>
-    private static JsonObject ScrollToEnd(JsonObject request)
+    /// <summary>Scrolls the first vertically scrollable element at or under the given one to
+    /// <c>percent</c> of its height, its end when none is given: as a person scrolls a long form to
+    /// the section at its foot, or a list to the row a virtualised list has not built yet.</summary>
+    private static JsonObject ScrollTo(JsonObject request)
     {
+        var percent = (double?)request["percent"] ?? 100;
         var root = PeerOf(HandleIn(request));
         var window = WindowOf.TryGetValue(root, out var known) ? known : OpenWindows()[0];
         foreach (var peer in Walk([(root, window)]))
         {
             if (peer.GetPattern(PatternInterface.Scroll) is IScrollProvider { VerticallyScrollable: true } scroll)
             {
-                scroll.SetScrollPercent(-1, 100);
+                scroll.SetScrollPercent(-1, percent);
                 return new JsonObject { ["ok"] = true };
             }
         }

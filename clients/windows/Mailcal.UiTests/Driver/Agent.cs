@@ -144,6 +144,9 @@ internal sealed class Agent : IDisposable
     /// <summary>Opens a combo box or a drop-down.</summary>
     internal void Expand(Element element) => Call(Handle("expand", element));
 
+    /// <summary>Closes what <see cref="Expand"/> opened.</summary>
+    internal void Collapse(Element element) => Call(Handle("collapse", element));
+
     internal void Focus(Element element) => Call(Handle("focus", element));
 
     /// <summary>The element that has the keyboard, or null when nothing in the app does.</summary>
@@ -151,7 +154,16 @@ internal sealed class Agent : IDisposable
 
     /// <summary>Scrolls the first vertically scrollable element at or under <paramref name="element"/>
     /// to its end; whether there was one.</summary>
-    internal bool ScrollToEnd(Element element) => (bool)Call(Handle("scrollToEnd", element))["ok"]!;
+    internal bool ScrollToEnd(Element element) => ScrollTo(element, 100);
+
+    /// <summary>Scrolls the first vertically scrollable element at or under <paramref name="element"/>
+    /// to <paramref name="percent"/> of its height; whether there was one.</summary>
+    internal bool ScrollTo(Element element, double percent)
+    {
+        var request = Handle("scrollTo", element);
+        request["percent"] = percent;
+        return (bool)Call(request)["ok"]!;
+    }
 
     /// <summary>The app's open windows, the mailbox first.</summary>
     internal IReadOnlyList<AppWindow> Windows() =>

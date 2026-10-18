@@ -53,7 +53,7 @@ A suite file declares its dataset and its cases and nothing else:
 
 ```powershell
 $Suite = @{
-  Dataset = 'showcase'          # or 'harness': §3 decides which proves your point
+  Dataset = 'showcase'          # or 'first-run'; a harness suite goes in Mailcal.UiTests (§3)
   Env = @{ MAILCAL_… = '…' }    # optional; set before launch, removed after the suite
   Cases = @(
     @{ Name = 'what must be true'; Body = { Assert-Equal 600 (Get-RowTextWeight -Row $r -Text 'x') 'why' } }
@@ -64,12 +64,13 @@ $Suite = @{
 **`Env` is how a suite reaches a `MAILCAL_*` switch**, and both halves of the runner's handling
 matter: the app reads them once at startup, so a `$env:` line inside a Body is already too late,
 and one set at a suite file's top level leaks into every suite that sorts after it (§5's
-`MAILCAL_SHOWCASE` trap, which reads as a passing test against the wrong dataset). It is also how a
-suite picks a different harness transport: `MAILCAL_DEV_ACCOUNT = 'stalwart-imap'` for the CalDAV
+`MAILCAL_SHOWCASE` trap, which reads as a passing test against the wrong dataset). A harness suite
+in [`Mailcal.UiTests`](../../../clients/windows/Mailcal.UiTests) does the same through its launch
+fixture, which is also how it picks a transport: `MAILCAL_DEV_ACCOUNT=stalwart-imap` for the CalDAV
 half.
 
 **When the state you need is one the harness cannot produce, fake the *input*, never the surface.**
-`InvitationReplyPrompt.Tests.ps1` is the worked example: no server here ever reports a failed iTIP
+[`InvitationReplyPromptTests.cs`](../../../clients/windows/Mailcal.UiTests/Suites/InvitationReplyPromptTests.cs) is the worked example: no server here ever reports a failed iTIP
 delivery, so `MAILCAL_FAKE_REPLY_DELIVERY=failed:5.2` substitutes the calendar server's verdict in
 the **core** and leaves everything downstream real. A hook that instead set the view-model's prompt
 directly would go on passing after the wiring between core and client was cut, which is the one
@@ -209,21 +210,18 @@ previous gesture's *animation*, and that race is where the calendar's swallowed 
 tests the case that already worked (`docs/calendar.md` §9). Put that race in a **unit** test that owns
 the clock (`Mailcal.Tests/CalendarFlickTests.cs`). Use both.
 
-### The system save/open picker: answered by keyboard
+### The system save/open picker
 
-`FileSavePicker` (e.g. Settings → Diagnostics → *Export log…*) opens the classic Save As dialog,
-and three things about it defeat the obvious approaches:
-
-- It is a **child** window (class `#32770`) of the app window, **never** a top-level window, so
-  polling `RootElement`'s children for a new window finds nothing. Find it as
-  `(Get-MailcalWindow).FindFirst(Children, ClassName == '#32770')`.
-- Its controls expose a **degenerate UIA tree**: the filename box (`#1001` under
-  `#FileNameControlHost`) and the Save button (`#1`) are patternless Panes, with no `ValuePattern`, no
-  `InvokePattern`, and `SetFocus()` throws. Raw `TreeScope.Descendants` also under-walks it
-  (trap 1 all over again).
-- What **works** is the keyboard, since the filename box has default focus: Ctrl+A, the path typed
-  as written, Enter (`Save-ThroughFilePicker`, through `Send-WinappKeys`). Assert on the **written
-  file** afterwards (bytes, not existence), never on the dialog.
+`FileSavePicker` (the reading pane's *Export as .eml*, Settings → Diagnostics → *Export log…*)
+opens the classic Save As, a `#32770` dialog **owned** by the app window. UI Automation files an
+owned window under its owner, so a search of the desktop's children never meets it; find it through
+the window list (`EnumWindows`, the app's process, class `#32770`). The name box is `#1001` under
+`#FileNameControlHost` (the address band carries a `#1001` of its own, which an unscoped search
+meets first), and takes a path through its value; Save is `#1`. Set the path rather than typing it:
+keys sent as the dialog opens lose their first characters.
+[`Mailcal.UiTests/Driver/SaveDialogs.cs`](../../../clients/windows/Mailcal.UiTests/Driver/SaveDialogs.cs)
+does all of it. Assert on the **written file** afterwards (bytes, not existence), never on the
+dialog: the dialog creates the file empty, and the app writes it afterwards.
 
 ### The composer's message body: DevTools (`composer.ps1`)
 
