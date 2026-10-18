@@ -389,7 +389,9 @@ Standing up a Linux image on a Mac to compile `mailcal-linux`, or reaching for t
 from anywhere but Windows, costs gigabytes of image and cache and a cold compile, on a machine
 someone is working on, to produce the answer the runner produces anyway. Run
 `cargo xtask gate --clients`, which already limits itself to what this host owns, and **say
-which platforms went unexercised locally** rather than finding a way to exercise them.
+which platforms went unexercised locally** rather than finding a way to exercise them here.
+Another machine that owns the platform is a different matter: when one runs a builder session,
+hand it the pushed branch with the `platform-builders` skill.
 
 ⚠️ **The Linux client breaks differently from the other three, because it is the only one
 consuming the bindings as Rust.** Swift, Kotlin and C# are generated with default arguments, so
