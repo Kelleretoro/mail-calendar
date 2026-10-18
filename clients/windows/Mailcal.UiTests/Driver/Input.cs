@@ -43,25 +43,52 @@ internal static class Input
     }
 
     /// <summary>Clicks the middle of <paramref name="element"/>, once or as a double-click, with its
-    /// window in front.</summary>
-    internal static void Click(Element element, int times = 1)
+    /// window in front; <paramref name="right"/> presses the secondary button instead.</summary>
+    internal static void Click(Element element, int times = 1, bool right = false)
     {
         if (!element.Rendered)
         {
             throw new InvalidOperationException($"'{element.Name}' (#{element.Id}) is not drawn, so a press cannot land on it");
         }
         BringToFront(element.Window);
-        ClickAt((int)(element.X + element.Width / 2), (int)(element.Y + element.Height / 2), times);
+        ClickAt((int)(element.X + element.Width / 2), (int)(element.Y + element.Height / 2), times, right);
     }
 
     /// <summary>Clicks a screen point, in physical pixels, once or as a double-click.</summary>
-    internal static void ClickAt(int x, int y, int times = 1)
+    internal static void ClickAt(int x, int y, int times = 1, bool right = false)
     {
         SetCursorPos(x, y);
+        var (down, up) = right ? (MouseRightDown, MouseRightUp) : (MouseLeftDown, MouseLeftUp);
         for (var i = 0; i < times; i++)
         {
-            Send(Mouse(MouseLeftDown), Mouse(MouseLeftUp));
+            Send(Mouse(down), Mouse(up));
         }
+    }
+
+    /// <summary>Presses and releases one key, by its virtual-key code, in whatever has the keyboard.
+    /// With its scan code too, as a keyboard sends it: a text box reads that, not the code alone.</summary>
+    internal static void Press(ushort virtualKey)
+    {
+        var scan = (ushort)MapVirtualKeyW(virtualKey, MapVirtualKeyToScanCode);
+        Send(
+            new NativeInput { Type = InputKeyboard, Union = new InputUnion { Keyboard = new KeyboardInput { Virtual = virtualKey, Scan = scan } } },
+            new NativeInput { Type = InputKeyboard, Union = new InputUnion { Keyboard = new KeyboardInput { Virtual = virtualKey, Scan = scan, Flags = KeyUp } } });
+    }
+
+    private const uint MapVirtualKeyToScanCode = 0;
+
+    internal const ushort Escape = 0x1B;
+    internal const ushort Enter = 0x0D;
+
+    /// <summary>Turns the wheel over a screen point, in notches: positive is away from the user.</summary>
+    internal static void Wheel(int x, int y, int notches)
+    {
+        SetCursorPos(x, y);
+        Send(new NativeInput
+        {
+            Type = InputMouse,
+            Union = new InputUnion { Mouse = new MouseInput { Data = unchecked((uint)(notches * 120)), Flags = MouseWheel } },
+        });
     }
 
     /// <summary>Types <paramref name="text"/> into whatever has the keyboard, as characters rather
@@ -96,6 +123,9 @@ internal static class Input
     private const uint InputKeyboard = 1;
     private const uint MouseLeftDown = 0x0002;
     private const uint MouseLeftUp = 0x0004;
+    private const uint MouseRightDown = 0x0008;
+    private const uint MouseRightUp = 0x0010;
+    private const uint MouseWheel = 0x0800;
     private const uint KeyUp = 0x0002;
     private const uint KeyUnicode = 0x0004;
     private static readonly nint PerMonitorAwareV2 = -4;
@@ -141,5 +171,6 @@ internal static class Input
     [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] private static extern void keybd_event(byte vk, byte scan, uint flags, nuint extra);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint hwnd);
+    [DllImport("user32.dll")] private static extern uint MapVirtualKeyW(uint code, uint mapType);
     [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(nint context);
 }

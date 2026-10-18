@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
@@ -41,6 +42,16 @@ internal static partial class TestAgent
         if (peer.GetPattern(PatternInterface.ExpandCollapse) is IExpandCollapseProvider expand)
         {
             described["expanded"] = expand.ExpandCollapseState.ToString();
+        }
+        // What a picker shows, never its own name, which is its header. A closed drop-down has no
+        // containers, so the item stands in for its own when there is none.
+        if (peer is FrameworkElementAutomationPeer { Owner: Microsoft.UI.Xaml.Controls.Primitives.Selector selector }
+            && selector.SelectedItem is { } chosen)
+        {
+            described["selection"] = selector.ContainerFromItem(chosen) is UIElement container
+                && FrameworkElementAutomationPeer.CreatePeerForElement(container) is { } shown
+                    ? shown.GetName()
+                    : chosen.ToString();
         }
     }
 
@@ -112,6 +123,16 @@ internal static partial class TestAgent
         return new JsonObject { ["toggle"] = toggle.ToggleState.ToString() };
     }
 
+    /// <summary>Opens a combo box or a drop-down, whose items have no peers until it is open.</summary>
+    private static JsonObject Expand(JsonObject request)
+    {
+        var peer = PeerOf(HandleIn(request));
+        var expand = peer.GetPattern(PatternInterface.ExpandCollapse) as IExpandCollapseProvider
+            ?? throw new AgentException($"'{peer.GetName()}' does not expand");
+        expand.Expand();
+        return new JsonObject { ["ok"] = true };
+    }
+
     /// <summary>Scrolls the element into its list's view, through the nearest scroll item: the
     /// element a suite presses is often a text inside a row.</summary>
     private static JsonObject ScrollIntoView(JsonObject request)
@@ -133,6 +154,30 @@ internal static partial class TestAgent
     {
         PeerOf(HandleIn(request)).SetFocus();
         return new JsonObject { ["ok"] = true };
+    }
+
+    /// <summary>The element that has the keyboard, in whichever window has it, or none.</summary>
+    private static JsonObject Focused()
+    {
+        var focused = Walk(OpenWindows().SelectMany(WindowRoots)).FirstOrDefault(peer => peer.HasKeyboardFocus());
+        return new JsonObject { ["elements"] = focused is null ? new JsonArray() : new JsonArray(Describe(focused)) };
+    }
+
+    /// <summary>Scrolls the first vertically scrollable element at or under the given one to its end,
+    /// as a person scrolls a long form to the section at its foot.</summary>
+    private static JsonObject ScrollToEnd(JsonObject request)
+    {
+        var root = PeerOf(HandleIn(request));
+        var window = WindowOf.TryGetValue(root, out var known) ? known : OpenWindows()[0];
+        foreach (var peer in Walk([(root, window)]))
+        {
+            if (peer.GetPattern(PatternInterface.Scroll) is IScrollProvider { VerticallyScrollable: true } scroll)
+            {
+                scroll.SetScrollPercent(-1, 100);
+                return new JsonObject { ["ok"] = true };
+            }
+        }
+        return new JsonObject { ["ok"] = false };
     }
 
     /// <summary>

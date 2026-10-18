@@ -1,6 +1,6 @@
-// The running app: launched on the harness store with its test agent listening, and brought to the
-// state every suite starts from. The launch mirrors control.ps1 and the readiness mirrors
-// uitests/dataset.ps1, whose headers say why each step is there.
+// The running app: launched on the harness store, or on an empty one for a first run, with its test
+// agent listening, and brought to the state every suite starts from. The launch mirrors control.ps1
+// and the readiness mirrors uitests/dataset.ps1, whose headers say why each step is there.
 
 using System.Diagnostics;
 
@@ -12,6 +12,11 @@ internal sealed partial class App : IDisposable
     private readonly Process _process;
 
     internal Agent Agent { get; }
+
+    /// <summary>Whether the app is still running: a crash leaves every other read stale.</summary>
+    internal bool Running => !_process.HasExited;
+
+    internal int ProcessId => _process.Id;
 
     private App(Process process, Agent agent)
     {
@@ -25,9 +30,24 @@ internal sealed partial class App : IDisposable
     /// <summary>Launches the newest Debug build on the harness store and waits until it is ready:
     /// past the first-run question and the default-mail-app offer, rows listed, and the calendar
     /// back from the server.</summary>
-    internal static App LaunchOnHarness()
+    internal static App LaunchOnHarness(IReadOnlyDictionary<string, string>? env = null) => Launch(env, firstRun: false);
+
+    /// <summary>
+    /// Launches the newest Debug build on an empty store and waits for the account-setup form,
+    /// past the welcome question: for a suite that sets an account up against the harness through
+    /// the form, as a first run does. The store is emptied first, its credentials included
+    /// (clear-dev-namespace.ps1 says why both), because a first run is defined by there being
+    /// nothing in it.
+    /// </summary>
+    internal static App LaunchOnFirstRun(IReadOnlyDictionary<string, string>? env = null) => Launch(env, firstRun: true);
+
+    private static App Launch(IReadOnlyDictionary<string, string>? env, bool firstRun)
     {
         Stop();
+        if (firstRun)
+        {
+            ClearNamespace("dev-first-run");
+        }
         var pipe = $"mailcal-uitests-{Environment.ProcessId}";
         var environment = new Dictionary<string, string?>
         {
@@ -37,10 +57,14 @@ internal sealed partial class App : IDisposable
             ["MAILCAL_SHOWCASE"] = null,
             ["MAILCAL_SHOWCASE_SCREEN"] = null,
             ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = null,
-            ["MAILCAL_DEV_ACCOUNT"] = Environment.GetEnvironmentVariable("MAILCAL_DEV_ACCOUNT") ?? "stalwart",
+            ["MAILCAL_DEV_ACCOUNT"] = firstRun ? "first-run" : Environment.GetEnvironmentVariable("MAILCAL_DEV_ACCOUNT") ?? "stalwart",
             ["MAILCAL_EXTRA_CA"] = Path.Combine(Repo, "docker", "stalwart", "tls", "harness-ca.pem"),
             ["MAILCAL_TEST_AGENT"] = pipe,
         };
+        foreach (var (name, value) in env ?? new Dictionary<string, string>())
+        {
+            environment[name] = value;
+        }
 
         // Through the shell, so the app inherits none of this process's handles: a child holding the
         // test host's output open keeps `dotnet test` waiting after the last case. The shell hands
@@ -65,11 +89,66 @@ internal sealed partial class App : IDisposable
             }
         }
         var app = new App(process, Agent.Connect(pipe, TimeSpan.FromSeconds(60)));
-        app.WaitReady(launchedAt);
+        if (firstRun)
+        {
+            app.WaitSetupForm();
+        }
+        else
+        {
+            app.WaitReady(launchedAt, environment["MAILCAL_DEV_ACCOUNT"]!);
+        }
         return app;
     }
 
-    private void WaitReady(DateTimeOffset launchedAt)
+    /// <summary>
+    /// The welcome question answered with Get started, then the setup form. Ready means the question
+    /// was answered and not merely that the form is up: a core that failed to open draws the form
+    /// with no welcome question before it (uitests/dataset.ps1 has the case it hid).
+    /// </summary>
+    private void WaitSetupForm()
+    {
+        // The button is in the tree, out of view behind the launch view, from the start: only one on
+        // screen is the question being asked.
+        var asked = Filter.ById("WelcomeGetStarted", "Button") with { OnScreen = true };
+        var form = Filter.ById("DetectEmail", "Edit") with { OnScreen = true };
+        if (Agent.Wait(asked, TimeSpan.FromSeconds(60)) is null)
+        {
+            throw new InvalidOperationException(Agent.Find(form) is null
+                ? "the launch view never gave way to the welcome question"
+                : "the setup form came up with no welcome question before it, which is what a core that failed to open draws");
+        }
+        var answered = Eventually(() =>
+        {
+            if (Agent.Find(asked) is { } welcome)
+            {
+                Agent.Invoke(welcome);
+            }
+            return Agent.Wait(form, TimeSpan.FromSeconds(2)) is not null && Agent.Find(asked) is null;
+        }, TimeSpan.FromSeconds(30));
+        if (!answered)
+        {
+            throw new InvalidOperationException("the welcome question never gave way to the account-setup form");
+        }
+    }
+
+    private static void ClearNamespace(string space)
+    {
+        var script = Path.Combine(Repo, "clients", "windows", "clear-dev-namespace.ps1");
+        var clear = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Namespace", space })
+        {
+            clear.ArgumentList.Add(argument);
+        }
+        using var process = Process.Start(clear) ?? throw new InvalidOperationException("pwsh did not start");
+        var said = process.StandardOutput.ReadToEndAsync();
+        var complained = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(60_000) || process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"{space} could not be emptied: {said.Result}{complained.Result}");
+        }
+    }
+
+    private void WaitReady(DateTimeOffset launchedAt, string devAccount)
     {
         // A store that has never been asked opens on the welcome question, answered with Get
         // started: a test run must not opt this machine into analytics (docs/analytics.md).
@@ -87,7 +166,7 @@ internal sealed partial class App : IDisposable
         {
             throw new InvalidOperationException("the harness store never listed any mail; is the harness seeded (scripts/dev/harness.sh up)?");
         }
-        DeclineDefaultMailAppOffer();
+        DeclineDefaultMailAppOffer(devAccount);
         WaitCalendarSynced(launchedAt);
     }
 
@@ -96,10 +175,20 @@ internal sealed partial class App : IDisposable
     /// It is modal, and while it is up a real press reaches nothing behind it. It arrives late, so a
     /// store that has not answered is waited on; one that has is not.
     /// </summary>
-    private void DeclineDefaultMailAppOffer()
+    private void DeclineDefaultMailAppOffer(string devAccount)
     {
+        // Each harness account runs on a store of its own (AppPaths.DevStoreSubdir).
+        var store = devAccount.Trim().ToLowerInvariant() switch
+        {
+            "stalwart" => "dev",
+            "stalwart-multi" => "dev-multi",
+            "stalwart-imap" => "dev-imap",
+            "stalwart-linked" => "dev-linked",
+            "first-run" => "dev-first-run",
+            _ => throw new InvalidOperationException($"no harness store is known for MAILCAL_DEV_ACCOUNT={devAccount}"),
+        };
         var prefs = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Allodia", "MailCalendar", "dev", "preferences.toml");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Allodia", "MailCalendar", store, "preferences.toml");
         bool Answered() => File.Exists(prefs)
             && File.ReadLines(prefs).Any(line => line.TrimStart().StartsWith("default_mail_app_offer", StringComparison.Ordinal));
         if (Answered())

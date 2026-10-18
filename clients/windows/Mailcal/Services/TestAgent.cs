@@ -58,6 +58,8 @@ internal static partial class TestAgent
             return;
         }
         Tracked.Add(new WeakReference<Window>(window));
+        // A closed window outlives its close, and every property read on it then throws.
+        window.Closed += (_, _) => Tracked.RemoveAll(reference => !reference.TryGetTarget(out var open) || ReferenceEquals(open, window));
 #endif
     }
 
@@ -123,8 +125,11 @@ internal static partial class TestAgent
                 "select" => OnUi(() => Select(request)),
                 "setValue" => OnUi(() => SetValue(request)),
                 "toggle" => OnUi(() => Toggle(request)),
+                "expand" => OnUi(() => Expand(request)),
                 "scrollIntoView" => OnUi(() => ScrollIntoView(request)),
                 "focus" => OnUi(() => Focus(request)),
+                "focused" => OnUi(Focused),
+                "scrollToEnd" => OnUi(() => ScrollToEnd(request)),
                 "settle" => Settle(request),
                 "dump" => OnUi(() => Dump(request)),
                 _ => throw new AgentException($"an unknown op '{op}'"),
