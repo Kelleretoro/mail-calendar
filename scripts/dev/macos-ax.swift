@@ -299,9 +299,9 @@ let keyCodes: [String: CGKeyCode] = [
     "a": 0, "c": 8, "v": 9, "x": 7, "z": 6,
 ]
 
-let modifiers: [String: CGEventFlags] = [
-    "cmd": .maskCommand, "shift": .maskShift, "alt": .maskAlternate, "option": .maskAlternate,
-    "ctrl": .maskControl,
+let modifiers: [String: (flag: CGEventFlags, code: CGKeyCode)] = [
+    "cmd": (.maskCommand, 55), "shift": (.maskShift, 56), "alt": (.maskAlternate, 58),
+    "option": (.maskAlternate, 58), "ctrl": (.maskControl, 59),
 ]
 
 /// One key, or a chord such as `cmd+v` or `cmd+shift+z`, sent to the debug build `appElement()`
@@ -309,24 +309,41 @@ let modifiers: [String: CGEventFlags] = [
 ///
 /// ⚠️ An `osascript` keystroke is no substitute: it goes to whichever app is frontmost, and a click
 /// on a window that was not frontmost may only activate it, so the chord lands in another app.
+///
+/// ⚠️ Each modifier is pressed and released as a key of its own. A flag set on the chord's key
+/// events alone stays latched in the session's modifier state once they are posted, so every later
+/// key on the Mac, the user's included, arrives with it held: a typed "." becomes ⌘. and cancels
+/// the sheet it was typed into.
 func key(_ chord: String) {
     var parts = chord.lowercased().split(separator: "+").map(String.init)
     let name = parts.popLast() ?? ""
     guard let code = keyCodes[name] else {
         fail("unknown key '\(name)' (\(keyCodes.keys.sorted().joined(separator: "|")))", 1)
     }
-    var flags: CGEventFlags = []
+    var held: [(flag: CGEventFlags, code: CGKeyCode)] = []
     for part in parts {
-        guard let flag = modifiers[part] else {
+        guard let modifier = modifiers[part] else {
             fail("unknown modifier '\(part)' (\(modifiers.keys.sorted().joined(separator: "|")))", 1)
         }
-        flags.insert(flag)
+        held.append(modifier)
     }
-    for isDown in [true, false] {
-        let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: isDown)
+    var flags: CGEventFlags = []
+    func post(_ code: CGKeyCode, down: Bool, modifier: Bool) {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
+        if modifier { event?.type = .flagsChanged }
         event?.flags = flags
         event?.post(tap: .cghidEventTap)
         usleep(30_000)
+    }
+    for modifier in held {
+        flags.insert(modifier.flag)
+        post(modifier.code, down: true, modifier: true)
+    }
+    post(code, down: true, modifier: false)
+    post(code, down: false, modifier: false)
+    for modifier in held.reversed() {
+        flags.remove(modifier.flag)
+        post(modifier.code, down: false, modifier: true)
     }
 }
 
