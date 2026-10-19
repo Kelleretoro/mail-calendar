@@ -94,7 +94,7 @@ struct AccountPageView: View {
             .padding(.bottom, 6)
             Text(entry.address).font(.title3).bold()
             #endif
-            Text(AccountSettingsLabels.kind(entry.kind))
+            Text(AccountSettingsLabels.kindLine(entry))
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -116,7 +116,8 @@ struct AccountPageView: View {
                     signIn(adding: [])
                 }
                 if model.signingInAgain == entry.id {
-                    progress(L10n.settings_account_signin_waiting(email: entry.address))
+                    progress(L10n.settings_account_signin_waiting(
+                        email: AccountSettingsLabels.name(entry)))
                 } else if let signInResult {
                     Text(signInResult)
                         .font(.callout)
@@ -375,7 +376,7 @@ struct LinkPickerRow: View {
             ) {
                 Text(L10n.settings_account_link_none()).tag(String?.none)
                 ForEach(picker.options, id: \.id) { option in
-                    Text(option.address).tag(Optional(option.id))
+                    Text(AccountSettingsLabels.name(option)).tag(Optional(option.id))
                 }
             }
             .pickerStyle(.menu)
@@ -384,7 +385,8 @@ struct LinkPickerRow: View {
             if let suggested = picker.suggested {
                 let option = picker.options[suggested]
                 HStack(spacing: 8) {
-                    Text(L10n.settings_account_link_suggested(address: option.address))
+                    Text(L10n.settings_account_link_suggested(
+                        address: AccountSettingsLabels.name(option)))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if suggestButton, selected != suggested {

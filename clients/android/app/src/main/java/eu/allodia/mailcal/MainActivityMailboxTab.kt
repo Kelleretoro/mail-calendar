@@ -322,8 +322,9 @@ internal fun MainActivity.MailboxTabContent(instance: MailcalApp) {
                             selectedAccount = selectedAccount,
                             onSelectAccount = { instance.dispatch(Intent.SelectAccount(it)) },
                             onRemoveAccount = { removeAccount(it) },
-                            unlinkedBy = { id ->
-                                accountSettings.entry(id)?.let(AccountSettingsRules::unlinked)
+                            removalOf = { id ->
+                                accountSettings.entry(id)
+                                    ?.let { accountRemoval(this@MailboxTabContent, it) }
                             },
                             // The folder navigation drawer state, the hamburger icon opens it.
                             drawerState = drawerState,
