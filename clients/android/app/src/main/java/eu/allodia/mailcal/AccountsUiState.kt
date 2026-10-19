@@ -64,6 +64,9 @@ internal class AccountsUiState {
     /** The consent sign-in the next Microsoft or Google redirect completes, if any. */
     var consent: PendingConsent? = null
 
+    /** An IMAP or JMAP account's sign-in, switched or renewed, and what each server takes. */
+    val signIn = AccountSignInState()
+
     /**
      * A first sign-in from the setup form claims the redirect a sign-in again was waiting for. That
      * one can no longer finish, so its page stops saying it is under way, or "Sign in again" would
@@ -97,6 +100,7 @@ internal fun coreErrorText(error: Throwable): String? = when (error) {
     is MailcalException.SignInRefused -> error.reason
     // The record carries the account's id, an address; the core's own words carry none.
     is MailcalException.AlreadySetUp -> "that account is already set up"
+    is MailcalException.DifferentAccount -> "that sign-in is for a different account"
     is MailcalException.Engine -> error.v1
     is MailcalException.Composer -> error.v1
     else -> error.message
@@ -104,11 +108,13 @@ internal fun coreErrorText(error: Throwable): String? = when (error) {
 
 /**
  * What to show a person for a core refusal: a refused sign-in in their language, since the
- * server's reply is meant for a developer, and an account already set up likewise; anything else
+ * server's reply is meant for a developer, and an account already set up or a sign-in as another
+ * account likewise; anything else
  * as [coreErrorText] has it.
  */
 internal fun coreErrorSaid(error: Throwable, ctx: Context): String? = when (error) {
     is MailcalException.SignInRefused -> L10n.signin_refused(ctx)
     is MailcalException.AlreadySetUp -> L10n.account_already_set_up(ctx)
+    is MailcalException.DifferentAccount -> L10n.signin_different_account(ctx)
     else -> coreErrorText(error)
 }

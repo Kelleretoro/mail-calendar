@@ -29,24 +29,30 @@ enum UseChangeOutcome: Equatable {
 enum ConsentBrowser {
     case microsoft(MicrosoftSignIn)
     case google(any GoogleBrowserFlow)
+    /// A standards or JMAP account's sign-in, from its page or the banner.
+    case standards(JmapSignIn)
 
     func cancel() {
         switch self {
         case let .microsoft(signIn): signIn.cancel()
         case let .google(flow): flow.cancel()
+        case let .standards(signIn): signIn.cancel()
         }
     }
 }
 
 /// What a person reads for a core error: its own message, without the enum around it. A refused
 /// sign-in is said in the person's language, since the server's reply is meant for a developer
-/// and the core has logged it, and an account already set up likewise.
+/// and the core has logged it, and an account already set up or a sign-in as another account
+/// likewise.
 func coreMessage(_ error: Error) -> String {
     switch error {
     case MailcalError.SignInRefused(_):
         return L10n.signin_refused()
     case MailcalError.AlreadySetUp(_):
         return L10n.account_already_set_up()
+    case MailcalError.DifferentAccount:
+        return L10n.signin_different_account()
     case let MailcalError.Config(message), let MailcalError.Connect(message),
          let MailcalError.Engine(message), let MailcalError.Composer(message):
         return message
@@ -159,6 +165,9 @@ extension MailboxModel {
         consentAttempt &+= 1
         let attempt = consentAttempt
         signingInAgain = id
+        // The newest sign-in in place owns every marker, including one a standards account's
+        // sign-in it just ended was holding.
+        signInSwitchBusy = nil
         let google = app.accountProvider(accountId: id) == .google
         let route = google ? "google" : "microsoft"
         do {
