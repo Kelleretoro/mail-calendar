@@ -1,8 +1,7 @@
 #!/usr/bin/env pwsh
-# Tests for uitests/agent-suites.ps1's reading of `dotnet test` output, the only place an agent
+# Tests for uitests/agent-suites.ps1's reading of `dotnet test` output, the only place a UI
 # suite's failure reason reaches run-ui-tests.ps1's summary. Run by build-and-run.ps1 (so the
-# `windows` CI job gates them) and standalone. It lives here rather than in uitests/ because the
-# runner there loads every *.tests.ps1 as a UI suite:
+# `windows` CI job gates them) and standalone:
 #
 #   ./agent-suites.tests.ps1
 #

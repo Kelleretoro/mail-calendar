@@ -385,7 +385,7 @@ The **CalDAV follow-on** offers the discovered calendar as an ✉ Email / 📅 C
 card on every client (a pre-checked opt-out toggle when found, an opt-in manual field otherwise,
 hidden until the offer is accepted, so an empty box never reads as a calendar we failed to fill
 in); on Apple, Linux and Windows the card is the core's choices, contacts included (rule 8). The
-Windows found card names its servers rather than offering them to edit, and `AddAccount.Tests.ps1`
+Windows found card names its servers rather than offering them to edit, and `AddAccountTests`
 reads them as lines, with no server field on screen until "Set up manually"; the discovered-CalDAV
 prefill specifically is still owed.
 
@@ -412,8 +412,8 @@ autodiscovery added a second and third concurrent lookup; the MX-only era ran on
 
 ## Known gaps
 
-- **Rule 12 is driven on Windows and iOS, not on macOS.** `Onboarding.Tests.ps1` and
-  `AddAccount.Tests.ps1` press "Set up manually", then Back, and read the address back;
+- **Rule 12 is driven on Windows and iOS, not on macOS.** `OnboardingTests.cs` and
+  `AddAccountTests.cs` press "Set up manually", then Back, and read the address back;
   `AccountSetupBackTests` does the same on iOS from the found card and the manual form, on a first
   run and a later add. The Apple UI suite is iOS only, so macOS shares the view but is checked by
   eye. Linux asserts the address it goes back with (`setup_uses_widget_tests`) and that Back waits
