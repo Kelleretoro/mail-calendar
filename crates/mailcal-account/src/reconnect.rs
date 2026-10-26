@@ -174,6 +174,13 @@ impl Provider for ReconnectingImapProvider {
         .await
     }
 
+    /// Passes each chunk on as it arrives: a first sync of a large mailbox takes many seconds,
+    /// and each chunk is what puts its rows on screen.
+    ///
+    /// A retryable failure, a dead session's first command or a connection dropped partway
+    /// through, is redialled once and the pass run again from its start: rewriting a message
+    /// already passed on is harmless, and the sync counts each message once. A second failure is
+    /// reported, and the next pass resumes from the last checkpoint committed.
     fn stream_email<'a>(
         &'a self,
         account: &'a AccountId,
@@ -186,42 +193,30 @@ impl Provider for ReconnectingImapProvider {
         let cursor = cursor.cloned();
         Box::pin(async_stream::try_stream! {
             let mut retried = false;
-            loop {
+            'attempt: loop {
                 let provider = self.delegate().await?;
-                let mut chunks = Vec::new();
-                let result = {
-                    let mut stream = provider.stream_email(
-                        &account,
-                        cursor.as_ref(),
-                        window,
-                        fetch_batch,
-                        chunk_size,
-                    );
-                    let mut result = Ok(());
-                    while let Some(chunk) = stream.next().await {
-                        match chunk {
-                            Ok(chunk) => chunks.push(chunk),
-                            Err(err) => {
-                                result = Err(err);
-                                break;
+                let mut stream = provider.stream_email(
+                    &account,
+                    cursor.as_ref(),
+                    window,
+                    fetch_batch,
+                    chunk_size,
+                );
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(chunk) => yield chunk,
+                        Err(err) if err.class() == FailureClass::Retryable => {
+                            self.invalidate();
+                            if retried {
+                                Err(err)?;
                             }
+                            retried = true;
+                            continue 'attempt;
                         }
+                        Err(err) => Err(err)?,
                     }
-                    result
-                };
-                match result {
-                    Ok(()) => {
-                        for chunk in chunks {
-                            yield chunk;
-                        }
-                        break;
-                    }
-                    Err(err) if !retried && err.class() == FailureClass::Retryable => {
-                        self.invalidate();
-                        retried = true;
-                    }
-                    Err(err) => Err(err)?,
                 }
+                break;
             }
         })
     }
@@ -415,3 +410,7 @@ impl MailboxWrites for ReconnectingImapProvider {
 #[cfg(test)]
 #[path = "reconnect_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "reconnect_stream_tests.rs"]
+mod stream_tests;
