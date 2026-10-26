@@ -106,6 +106,12 @@ impl ConnectFailure {
         self.gone || self.signin_expired
     }
 
+    /// Whether the server simply did not answer: not a refusal, a start it says is gone, a
+    /// certificate, or a server that needs a sign-in of its own, each of which is an answer.
+    pub(crate) const fn is_outage(&self) -> bool {
+        !self.signin_expired && self.certificate.is_none() && !self.needs_own_sign_in && !self.gone
+    }
+
     /// What this failure means for a use that failed beside a working mailbox.
     pub(crate) const fn use_problem(&self) -> mailcal_app::UseProblem {
         if self.needs_own_sign_in {
@@ -181,9 +187,11 @@ pub(crate) struct DialOutcome {
     /// What stopped the calendar or contacts from connecting, mail being up: for the account's
     /// page in Settings, and for the next retry.
     pub(crate) use_problems: mailcal_app::UseProblems,
+    /// Which of the calendar and contacts failed only because their server did not answer.
+    pub(crate) unanswered: mailcal_app::Unanswered,
     /// The DAV principals the dial learned, for the registry to store
     /// ([`AccountRegistry::learn_dav_starts`](super::AccountRegistry::learn_dav_starts)).
-    pub(crate) learned: mailcal_account::DavStarts,
+    pub(crate) learned: mailcal_account::DavLearned,
     /// Whether the calendar or contacts failed in a way worth finding their servers again for
     /// ([`ConnectFailure::worth_rediscovering`]).
     pub(crate) rediscover: bool,

@@ -36,6 +36,20 @@ impl From<&mailcal_app::ServerChange> for ServerChange {
     }
 }
 
+/// What allowing a server change came to, when nothing failed.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ServerChangeAnswer {
+    /// Nothing waits on the person any more: the account moved onto the new servers, now or by
+    /// an answer given elsewhere, or the use connected again by itself.
+    Settled,
+    /// A lookup replaced the question shown before it was allowed. Nothing moved; `change` is
+    /// the question to show in its place.
+    Replaced {
+        /// The server change the account waits on now.
+        change: ServerChange,
+    },
+}
+
 #[uniffi::export]
 impl MailcalApp {
     /// The server change `account_id`'s calendar or contacts is paused for, for the dialog that
@@ -47,24 +61,38 @@ impl MailcalApp {
         self.app.server_change(&id).as_ref().map(ServerChange::from)
     }
 
-    /// Allows the servers found on another site: moves the account onto them once they have
-    /// connected ([`MailcalApp::update_account_endpoints`]), and lifts the pause. Declining needs
-    /// no call: the use stays paused, and the account's page offers the question again.
+    /// Allows the servers found on another site, if they are still the ones `shown`: moves the
+    /// account onto them once they have connected ([`MailcalApp::update_account_endpoints`]),
+    /// and lifts the pause. A lookup may have replaced the question while it was on screen; then
+    /// nothing moves, and the answer is the question to ask instead, because an allow must never
+    /// send the credential to a site the person was not shown. Declining needs no call: the use
+    /// stays paused, and the account's page offers the question again.
     ///
     /// **Blocking** (provider connect); call it off the UI thread.
     ///
     /// # Errors
     ///
-    /// Returns [`MailcalError::Config`] when the account waits on no server change,
+    /// Returns [`MailcalError::Config`] for an id that is not an account's or an account with no
+    /// servers to change,
     /// [`MailcalError::UseNotConnected`] when a use it moves does not connect on its new server,
     /// and what [`MailcalApp::update_account_endpoints`] returns when the account does not; the
     /// account stays paused as it was.
-    pub fn accept_server_change(&self, account_id: String) -> Result<(), MailcalError> {
+    pub fn accept_server_change(
+        &self,
+        account_id: String,
+        shown: ServerChange,
+    ) -> Result<ServerChangeAnswer, MailcalError> {
         let id = AccountId::try_from(account_id.as_str())
             .map_err(|err| MailcalError::Config(err.to_string()))?;
-        let change = self.app.server_change(&id).ok_or_else(|| {
-            MailcalError::Config("no server change is waiting for this account".to_owned())
-        })?;
+        // Allowed from another surface meanwhile, or the use connected again by itself: either
+        // way the question is over.
+        let Some(change) = self.app.server_change(&id) else {
+            return Ok(ServerChangeAnswer::Settled);
+        };
+        let pending = ServerChange::from(&change);
+        if pending != shown {
+            return Ok(ServerChangeAnswer::Replaced { change: pending });
+        }
         let stored = self
             .accounts_snapshot()
             .accounts
@@ -90,8 +118,8 @@ impl MailcalApp {
         .filter_map(|(moved, capability)| moved.then_some(capability))
         .collect();
         self.replace_endpoints(account_id, endpoints, &moved)?;
-        self.app.forget_server_change(&id);
-        Ok(())
+        self.app.forget_server_change(&id, &change);
+        Ok(ServerChangeAnswer::Settled)
     }
 }
 

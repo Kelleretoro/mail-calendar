@@ -57,6 +57,27 @@ pub struct Account<P> {
     pub dialled: bool,
 }
 
+/// Which of an account's calendar and contacts a dial could not reach because the server did not
+/// answer, as opposed to answering with a refusal or a start it says is gone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Unanswered {
+    /// The calendar's server did not answer.
+    pub calendar: bool,
+    /// The address book's server did not answer.
+    pub contacts: bool,
+}
+
+/// What [`App::replace_uses`] did with a redial of an account's calendar and contacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsesReplaced {
+    /// The account has the redial's calendar and contacts.
+    Replaced,
+    /// The redial could not reach a use the account has working, so it keeps what it had.
+    Kept,
+    /// The account was removed during the redial.
+    Gone,
+}
+
 impl<P> core::fmt::Debug for Account<P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // The providers may hold sensitive connection handles; show only the identity.
@@ -132,19 +153,28 @@ impl<P: Provider> App<P> {
     }
 
     /// Gives the live account `account.id` the calendar and contact providers `account` carries,
-    /// keeping the mail providers it already has, and reports whether it was still there.
+    /// keeping the mail providers it already has.
     ///
-    /// For a retry of a calendar or address book that failed beside a working mailbox: the
-    /// mailbox is connected, so nothing about it is replaced, synced or watched again. Nothing is
-    /// synced here either; the caller refreshes the calendar and contacts it reconnected.
-    pub async fn replace_uses(&self, account: Account<P>) -> bool {
+    /// For a retry of a calendar or address book that failed beside a working mailbox, and for
+    /// the daily redial of ones that work: the mailbox is connected, so nothing about it is
+    /// replaced, synced or watched again. Nothing is synced here either; the caller refreshes
+    /// the calendar and contacts it reconnected. A redial whose server did not answer
+    /// (`unanswered`) for a use the live account has working installs nothing, because an outage
+    /// says nothing about the servers and a working connection is not traded for none.
+    pub async fn replace_uses(&self, account: Account<P>, unanswered: Unanswered) -> UsesReplaced {
         let mut accounts = self.accounts.write().await;
         let Some(at) = accounts
             .iter()
             .position(|existing| existing.id == account.id)
         else {
-            return false;
+            return UsesReplaced::Gone;
         };
+        let live = &accounts[at];
+        if (unanswered.calendar && !live.calendar_providers.is_empty())
+            || (unanswered.contacts && !live.contact_providers.is_empty())
+        {
+            return UsesReplaced::Kept;
+        }
         self.forget_calendar_users(&account.id);
         accounts[at] = Arc::new(Account {
             providers: Arc::clone(&accounts[at].providers),
@@ -152,7 +182,7 @@ impl<P: Provider> App<P> {
         });
         drop(accounts);
         self.observer.surface_changed(Surface::Settings);
-        true
+        UsesReplaced::Replaced
     }
 
     /// Registers a newly-added user account without syncing, then gives it the product default
