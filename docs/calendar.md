@@ -123,7 +123,10 @@ and offers the override.
 **Which calendar a new event lands on is a setting, and the core resolves it.** `CalendarRow` carries
 **`is_default`**, and exactly one row has it whenever any calendar can be written to. The order is:
 the user's stored choice (Settings → Calendar) **while that calendar still exists and can still be
-written to**, otherwise the first writable calendar.
+written to**, otherwise the writable calendar its server names the default (Google's primary,
+Graph's default), otherwise the first writable calendar. A calendar is writable when its account's
+provider writes **and** the calendar is not read-only to the account: a share granted read-only, or
+a subscribed feed such as Google's holidays, is listed but never offered for an event.
 
 Both halves of that condition are load-bearing. A choice outlives its calendar when an account is
 removed or a calendar is deleted server-side, and it outlives its *writability* when a share is
@@ -2048,10 +2051,12 @@ Stated, not buried.
   `can_write: false` (an affordance that can never fire is just a mystery) while the global
   **"New event"** button is **disabled**, never hidden, so the header keeps its shape; it enables
   only when some `CalendarRow` on the page reports `can_write: true`, and an empty calendar list
-  (nothing synced yet) counts as no. The create routing keeps that promise: `calendar_account`
-  targets the selected account only when it can write, else the first account that can, and a
-  create with no writable account anywhere is the documented no-op, so an enabled button cannot
-  route a write to an account the core knows will refuse it. Two consequences worth knowing. The
+  (nothing synced yet) counts as no. The create routing keeps that promise: `create_account`
+  counts an account only when it has a `can_write` calendar (its provider writes **and** it lists
+  a calendar it may write), takes the picker's choice or else the selected account when that one
+  counts, else the first account that does, and a create with no such account anywhere is the
+  documented no-op, so an enabled button cannot route a write to an account the core knows will
+  refuse it, or to one with nowhere to put it. Two consequences worth knowing. The
   **showcase** dataset's calendar provider advertises no write guard, so under showcase the
   calendar now renders read-only (New event disabled, no delete affordances), honest, since its
   writes always went into a void, but it changes what showcase screenshots show. The **Windows**
@@ -2070,10 +2075,10 @@ Stated, not buried.
   concurrency gate), gated on the `Calendars.ReadWrite` OAuth scope, so it rides the *same*
   provider-neutral create/patch/delete verbs and per-row `can_write` gating as CalDAV/JMAP, and
   Graph advertises `WriteGuard::Enforced` (a stale `If-Match` ETag is a `412`). It is host-driven
-  and needs no client change: a connected Microsoft account's agenda simply appears. Four limits
-  ride in from the engine's `graph.md` and are **not** yet closed: only the account's **default
-  calendar** is bound (the Graph parallel of CalDAV's primary-calendar bind); the fetch **window**
-  is baked in at connect (a few months back, ~a year on) and re-centred only on reconnect; **one
+  and needs no client change: a connected Microsoft account's agenda simply appears. One provider
+  serves every calendar of the mailbox, each syncing under a scope of its own. Two limits ride in
+  from the engine's `graph.md` and are **not** yet closed: the fetch **window** is baked in at
+  connect (a few months back, ~a year on) and re-centred only on reconnect; **one
   display zone per provider** (the device zone, sent as `Prefer: outlook.timezone` for
   DST-correct expansion; the user's *chosen* display zone still re-projects the agenda in the
   view-model). The CalDAV `412` harness gap above applies to Graph too: no dev account drives its
@@ -2093,8 +2098,8 @@ Stated, not buried.
   the view-model's chosen-zone re-projection is the only zone step. And **both scopes are granted at
   connect** (Gmail + Calendar in one consent), so there is **no scope-upgrade reconnect**: the
   "reconnect to enable calendar" banner below is Microsoft-only; a Google account's agenda simply
-  appears. The same engine-side limits ride in as for Graph: only the account's **primary calendar**
-  is bound, and the fetch **window** is baked in at connect (≈120 days back, ≈400 forward) and
+  appears. One provider serves every calendar of the account. The same engine-side limits ride in
+  as for Graph: the fetch **window** is baked in at connect (≈120 days back, ≈400 forward) and
   re-centred only on reconnect. The `412` harness gap applies here too: no dev account drives the
   `Enforced` path locally.
 - **A scope-missing Microsoft account is told to reconnect, not left silently calendar-less.** Every
