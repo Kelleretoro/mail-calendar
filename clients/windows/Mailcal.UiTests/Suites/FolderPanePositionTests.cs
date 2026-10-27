@@ -10,7 +10,9 @@
 // "Nested folders"), and Projects/Clients/Acme holds the message whose read state this moves.
 //
 // WHY A SMALL WINDOW. Whether the pane scrolls depends on the desktop, so the window's height is
-// set, and put back afterwards: the app keeps its bounds for the next launch. The message is marked
+// set, and put back afterwards: the app keeps its bounds for the next launch. It is low enough that
+// Archive's subfolders scroll out of view on the default seed, which has only six folder rows below
+// them; `harness.sh up --bulk` adds more. The message is marked
 // unread and read again, so the suite leaves the mailbox as it found it.
 
 using Allodia.Mailcal.UiTests.Driver;
@@ -50,17 +52,8 @@ public sealed class FolderPanePositionTests(ImapHarnessApp harness)
 
     /// <summary>What Acme's row says about its unread mail: "" when it draws no count, null while
     /// the pane has no Acme row, which a pane rebuilding its rows has for a moment.</summary>
-    private static string? AcmeUnread(App app)
-    {
-        if (FolderRow(app, "Acme") is not { } acme)
-        {
-            return null;
-        }
-        var counts = Catalog.Everywhere("a11y_unread_count").Concat(Catalog.Everywhere("a11y_unread_count_one"))
-            .Select(pattern => new System.Text.RegularExpressions.Regex("^" + System.Text.RegularExpressions.Regex.Escape(pattern).Replace(@"\{count}", @"\d+") + "$"))
-            .ToList();
-        return string.Concat(app.Agent.FindAll(new Filter { Under = acme }).Select(e => e.Name).Where(name => counts.Any(c => c.IsMatch(name))));
-    }
+    private static string? AcmeUnread(App app) =>
+        FolderRow(app, "Acme") is { } acme ? app.PaneUnread(acme) : null;
 
     /// <summary>Presses the toolbar's read toggle and gives Acme's count ten seconds to read
     /// <paramref name="expect"/>. What it reads is asserted after the rows, so a pane that lost its
@@ -78,7 +71,7 @@ public sealed class FolderPanePositionTests(ImapHarnessApp harness)
         IDisposable? shrunk = null;
         harness.Case(nameof(AnUnreadCountThatMovesLeavesTheRowsThePaneShowsWhereTheyWere), app =>
         {
-            shrunk = Desktop.Resized(app.Mailbox.Hwnd, 1200, 560);
+            shrunk = Desktop.Resized(app.Mailbox.Hwnd, 1200, 480);
             app.Agent.Settle(quiet: TimeSpan.FromMilliseconds(300));
             app.Agent.Expand(Account(app));
             foreach (var folder in Opened)
